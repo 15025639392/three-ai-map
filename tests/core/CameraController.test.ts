@@ -30,6 +30,53 @@ function createViewportElement(): HTMLDivElement {
   return element;
 }
 
+function createTimedMouseEvent(
+  type: "mousedown" | "mousemove" | "mouseup",
+  clientX: number,
+  clientY: number,
+  timeStamp: number
+): MouseEvent {
+  const event = new MouseEvent(type, { clientX, clientY });
+  Object.defineProperty(event, "timeStamp", { value: timeStamp });
+  return event;
+}
+
+function createTimedWheelEvent(deltaY: number, timeStamp: number): WheelEvent {
+  const event = new WheelEvent("wheel", { deltaY });
+  Object.defineProperty(event, "timeStamp", { value: timeStamp });
+  return event;
+}
+
+function installAnimationFrameMock() {
+  let nextFrameId = 1;
+  const callbacks = new Map<number, FrameRequestCallback>();
+  const requestSpy = vi
+    .spyOn(window, "requestAnimationFrame")
+    .mockImplementation((callback: FrameRequestCallback) => {
+      const frameId = nextFrameId;
+      nextFrameId += 1;
+      callbacks.set(frameId, callback);
+      return frameId;
+    });
+  const cancelSpy = vi
+    .spyOn(window, "cancelAnimationFrame")
+    .mockImplementation((frameId: number) => {
+      callbacks.delete(frameId);
+    });
+
+  return {
+    runFrame(time: number) {
+      const pendingCallbacks = [...callbacks.values()];
+      callbacks.clear();
+      pendingCallbacks.forEach((callback) => callback(time));
+    },
+    restore() {
+      requestSpy.mockRestore();
+      cancelSpy.mockRestore();
+    }
+  };
+}
+
 describe("CameraController", () => {
   it("positions the camera from lng lat altitude", () => {
     const element = createViewportElement();
@@ -101,6 +148,34 @@ describe("CameraController", () => {
     expect(camera.up.distanceTo(stableUp)).toBeLessThan(1e-6);
   });
 
+  it("keeps rotating briefly after release based on drag velocity", () => {
+    const animationFrame = installAnimationFrameMock();
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+
+    controller.setView({ lng: 0, lat: 0, altitude: 2 });
+    controller.update();
+
+    element.dispatchEvent(createTimedMouseEvent("mousedown", 200, 200, 100));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", 260, 140, 116));
+    controller.update();
+
+    const releasedPosition = camera.position.clone();
+    window.dispatchEvent(createTimedMouseEvent("mouseup", 260, 140, 120));
+
+    animationFrame.runFrame(136);
+    controller.update();
+
+    expect(camera.position.distanceTo(releasedPosition)).toBeGreaterThan(0.001);
+
+    animationFrame.restore();
+  });
+
   it("zooms out on wheel-down and zooms in on wheel-up", () => {
     const element = createViewportElement();
     const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
@@ -129,6 +204,29 @@ describe("CameraController", () => {
     controller.update();
 
     expect(controller.getView().altitude).toBeCloseTo(0.2);
+  });
+
+  it("keeps zooming briefly after wheel input based on zoom velocity", () => {
+    const animationFrame = installAnimationFrameMock();
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+
+    controller.setView({ lng: 0, lat: 0, altitude: 2 });
+
+    element.dispatchEvent(createTimedWheelEvent(1000, 100));
+    const altitudeAfterWheel = controller.getView().altitude;
+
+    animationFrame.runFrame(116);
+
+    expect(controller.getView().altitude).toBeGreaterThan(altitudeAfterWheel);
+
+    animationFrame.restore();
   });
 
   it("keeps orbit rotation continuous after crossing the north pole", () => {

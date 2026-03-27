@@ -25,6 +25,13 @@ const ORBIT_EULER = new Euler(0, 0, 0, "YXZ");
 const DRAG_ROTATION = new Quaternion();
 const ARC_BALL_VECTOR = new Vector3();
 const ARC_BALL_CURRENT = new Vector3();
+const ROTATION_AXIS = new Vector3();
+
+const DEFAULT_FRAME_TIME = 1000 / 60;
+const ROTATION_DAMPING = 0.006;
+const ZOOM_DAMPING = 0.01;
+const MIN_ROTATION_SPEED = 0.00001;
+const MIN_ZOOM_SPEED = 0.00001;
 
 export class CameraController {
   private readonly camera: PerspectiveCamera;
@@ -38,6 +45,12 @@ export class CameraController {
   private altitude: number;
   private readonly orbitQuaternion = new Quaternion();
   private readonly dragVector = new Vector3();
+  private readonly rotationVelocity = new Vector3();
+  private zoomVelocity = 0;
+  private animationFrameId: number | null = null;
+  private previousAnimationTime: number | null = null;
+  private lastPointerTime: number | null = null;
+  private lastWheelTime: number | null = null;
 
   constructor({
     camera,
@@ -76,6 +89,9 @@ export class CameraController {
       (view.lat * Math.PI) / 180
     );
     this.orbitQuaternion.setFromEuler(ORBIT_EULER);
+    this.rotationVelocity.set(0, 0, 0);
+    this.zoomVelocity = 0;
+    this.stopInertiaLoop();
     this.onChange?.();
   }
 
@@ -116,6 +132,7 @@ export class CameraController {
     window.removeEventListener("mousemove", this.handlePointerMove);
     window.removeEventListener("mouseup", this.handlePointerUp);
     this.element.removeEventListener("wheel", this.handleWheel);
+    this.stopInertiaLoop();
   }
 
   private clampAltitude(altitude: number): number {
@@ -124,6 +141,9 @@ export class CameraController {
 
   private handlePointerDown = (event: MouseEvent): void => {
     this.isDragging = true;
+    this.rotationVelocity.set(0, 0, 0);
+    this.lastPointerTime = this.getEventTime(event.timeStamp);
+    this.stopInertiaLoopIfIdle();
     this.dragVector.copy(this.projectPointerToArcball(event.clientX, event.clientY));
   };
 
@@ -140,19 +160,164 @@ export class CameraController {
 
     DRAG_ROTATION.setFromUnitVectors(ARC_BALL_CURRENT, this.dragVector);
     this.orbitQuaternion.multiply(DRAG_ROTATION);
+    this.updateRotationVelocity(DRAG_ROTATION, this.getDeltaTime(this.lastPointerTime, event.timeStamp));
+    this.lastPointerTime = this.getEventTime(event.timeStamp);
     this.dragVector.copy(ARC_BALL_CURRENT);
     this.onChange?.();
   };
 
   private handlePointerUp = (): void => {
     this.isDragging = false;
+    this.lastPointerTime = null;
+    this.startInertiaLoop();
   };
 
   private handleWheel = (event: WheelEvent): void => {
-    const nextAltitude = this.altitude + event.deltaY * this.zoomSpeed;
-    this.altitude = this.clampAltitude(nextAltitude);
+    const deltaAltitude = event.deltaY * this.zoomSpeed;
+    const nextAltitude = this.clampAltitude(this.altitude + deltaAltitude);
+    const altitudeDelta = nextAltitude - this.altitude;
+    this.altitude = nextAltitude;
+    const deltaTime = this.getDeltaTime(this.lastWheelTime, event.timeStamp);
+    const sampleVelocity = altitudeDelta / deltaTime;
+
+    if (Math.sign(sampleVelocity) === Math.sign(this.zoomVelocity)) {
+      this.zoomVelocity += sampleVelocity;
+    } else {
+      this.zoomVelocity = sampleVelocity;
+    }
+
+    this.lastWheelTime = this.getEventTime(event.timeStamp);
+    this.startInertiaLoop();
     this.onChange?.();
   };
+
+  private startInertiaLoop(): void {
+    if (!this.hasInertia() || this.animationFrameId !== null) {
+      return;
+    }
+
+    this.previousAnimationTime = null;
+    this.animationFrameId = window.requestAnimationFrame(this.handleInertiaFrame);
+  }
+
+  private stopInertiaLoop(): void {
+    if (this.animationFrameId !== null) {
+      window.cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    this.previousAnimationTime = null;
+  }
+
+  private stopInertiaLoopIfIdle(): void {
+    if (!this.hasInertia()) {
+      this.stopInertiaLoop();
+    }
+  }
+
+  private handleInertiaFrame = (time: number): void => {
+    this.animationFrameId = null;
+    const deltaTime =
+      this.previousAnimationTime === null
+        ? DEFAULT_FRAME_TIME
+        : Math.max(1, time - this.previousAnimationTime);
+    this.previousAnimationTime = time;
+
+    const changed = this.applyInertia(deltaTime);
+
+    if (changed) {
+      this.onChange?.();
+    }
+
+    if (this.hasInertia()) {
+      this.animationFrameId = window.requestAnimationFrame(this.handleInertiaFrame);
+      return;
+    }
+
+    this.previousAnimationTime = null;
+  };
+
+  private applyInertia(deltaTime: number): boolean {
+    let changed = false;
+
+    const rotationSpeed = this.rotationVelocity.length();
+
+    if (rotationSpeed > MIN_ROTATION_SPEED) {
+      ROTATION_AXIS.copy(this.rotationVelocity).normalize();
+      DRAG_ROTATION.setFromAxisAngle(ROTATION_AXIS, rotationSpeed * deltaTime);
+      this.orbitQuaternion.multiply(DRAG_ROTATION);
+      this.rotationVelocity.multiplyScalar(Math.exp(-ROTATION_DAMPING * deltaTime));
+
+      if (this.rotationVelocity.length() <= MIN_ROTATION_SPEED) {
+        this.rotationVelocity.set(0, 0, 0);
+      }
+
+      changed = true;
+    } else {
+      this.rotationVelocity.set(0, 0, 0);
+    }
+
+    if (Math.abs(this.zoomVelocity) > MIN_ZOOM_SPEED) {
+      const nextAltitude = this.clampAltitude(this.altitude + this.zoomVelocity * deltaTime);
+      changed = changed || nextAltitude !== this.altitude;
+      this.altitude = nextAltitude;
+      this.zoomVelocity *= Math.exp(-ZOOM_DAMPING * deltaTime);
+
+      if (
+        this.altitude === this.minAltitude ||
+        this.altitude === this.maxAltitude ||
+        Math.abs(this.zoomVelocity) <= MIN_ZOOM_SPEED
+      ) {
+        this.zoomVelocity = 0;
+      }
+    } else {
+      this.zoomVelocity = 0;
+    }
+
+    return changed;
+  }
+
+  private updateRotationVelocity(rotationDelta: Quaternion, deltaTime: number): void {
+    const normalizedW = Math.max(-1, Math.min(1, rotationDelta.w));
+    const angle = 2 * Math.acos(normalizedW);
+
+    if (angle <= 0) {
+      this.rotationVelocity.set(0, 0, 0);
+      return;
+    }
+
+    const sinHalfAngle = Math.sqrt(1 - normalizedW * normalizedW);
+
+    if (sinHalfAngle <= 0.000001) {
+      ROTATION_AXIS.set(1, 0, 0);
+    } else {
+      ROTATION_AXIS.set(
+        rotationDelta.x / sinHalfAngle,
+        rotationDelta.y / sinHalfAngle,
+        rotationDelta.z / sinHalfAngle
+      );
+    }
+
+    this.rotationVelocity.copy(ROTATION_AXIS).multiplyScalar(angle / deltaTime);
+  }
+
+  private hasInertia(): boolean {
+    return this.rotationVelocity.length() > MIN_ROTATION_SPEED || Math.abs(this.zoomVelocity) > MIN_ZOOM_SPEED;
+  }
+
+  private getDeltaTime(previousTime: number | null, timeStamp: number): number {
+    const currentTime = this.getEventTime(timeStamp);
+
+    if (previousTime === null) {
+      return DEFAULT_FRAME_TIME;
+    }
+
+    return Math.max(1, currentTime - previousTime);
+  }
+
+  private getEventTime(timeStamp: number): number {
+    return timeStamp > 0 ? timeStamp : performance.now();
+  }
 
   private projectPointerToArcball(clientX: number, clientY: number): Vector3 {
     const rect = this.element.getBoundingClientRect();

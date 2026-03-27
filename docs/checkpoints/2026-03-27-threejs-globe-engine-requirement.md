@@ -47,6 +47,8 @@
   - [x] 最新全量验证通过：`19` 个测试文件、`30` 个测试全部通过
   - [x] 修复拨动地球时因重复 `mousemove` 继续累积旋转导致的抖动
   - [x] 最新全量验证通过：`19` 个测试文件、`31` 个测试全部通过
+  - [x] 增加旋转/缩放惯性，按手势和滚轮速度生成阻尼续动
+  - [x] 最新全量验证通过：`19` 个测试文件、`33` 个测试全部通过
 - 进行中：
   - [ ] 无
 - 下一步（唯一）：
@@ -123,6 +125,9 @@
 - 决策 23：arcball 轨迹球改为稳定的相机局部坐标，不再把同一屏幕点重复映射到变化中的世界向量。
   - 原因：旧实现会让同一个鼠标坐标在连续帧中对应不同旋转输入，导致指针停住后仍继续微转，视觉上表现为抖动。
   - 影响：`CameraController` 现在使用局部轨迹球向量并在右乘四元数后更新姿态，重复的同坐标 `mousemove` 不会继续转动地球。
+- 决策 24：旋转和缩放都采用速度驱动的惯性模型，力度越大，释放后的续动越明显。
+  - 原因：用户要求交互接近真实地球仪，而不是固定时长或固定幅度的缓动。
+  - 影响：`CameraController` 现在会从拖拽角速度和滚轮缩放速度采样初速度，再通过阻尼衰减短时驱动内部动画循环。
 
 ## 4) 变更与证据
 
@@ -167,6 +172,13 @@
   - `npm run typecheck` -> 通过
   - `npm run build` -> 构建通过，仍有 bundle 体积告警
   - `headless Chrome duplicate mousemove at (590,460)` -> 两张画布截图 `sha256` 一致，无继续转动：`0e4025ef6cad224dd5d855f65552664793c306b25b6077ff1b2792d94cb5b961`
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> 新增旋转惯性与缩放惯性回归测试通过
+  - `npm run test:run` -> `19` 个测试文件、`33` 个测试全部通过
+  - `npm run typecheck` -> 通过
+  - `npm run build` -> 构建通过，仍有 bundle 体积告警
+  - `headless Chrome inertia verification` -> 旋转与缩放在 350ms 延迟截图中都继续变化：
+    - rotation: `15860deeaf544b713c2aff985136eb3d2ba982bcad9ce7d36b4068cfa43d6d33` -> `62033ad087baaecd85c32d694ec848855d6f839bf8c3ae98a7600f2a83aa65e0`
+    - zoom: `5b978c9aec44517e16d7799b9ddf8c19d57b858bae459193bfcfdfe56f540ece` -> `47f2ce34e491241f93c92a3cb96dd562096c5ae54718d3b2575cbe1ed0df8991`
 - 关键日志/截图/报告路径：
   - `docs/plans/2026-03-27-threejs-globe-engine-design.md`
   - `docs/plans/2026-03-27-threejs-globe-engine.md`
@@ -175,6 +187,10 @@
   - `/tmp/three-map-after.png`
   - `/tmp/three-map-jitter-first.png`
   - `/tmp/three-map-jitter-second.png`
+  - `/tmp/three-map-inertia-rotation-immediate.png`
+  - `/tmp/three-map-inertia-rotation-delayed.png`
+  - `/tmp/three-map-inertia-zoom-immediate.png`
+  - `/tmp/three-map-inertia-zoom-delayed.png`
 
 ## 5) 风险与阻塞
 
