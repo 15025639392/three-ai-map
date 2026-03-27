@@ -68,6 +68,36 @@ function coordinateParentAtZoom(coordinate: TileCoordinate, zoom: number): TileC
   };
 }
 
+function expandCoordinates(coordinates: TileCoordinate[], padding: number): TileCoordinate[] {
+  if (padding <= 0 || coordinates.length === 0) {
+    return coordinates;
+  }
+
+  const expanded: TileCoordinate[] = [];
+
+  for (const coordinate of coordinates) {
+    const worldTileCount = 2 ** coordinate.z;
+
+    for (let dy = -padding; dy <= padding; dy += 1) {
+      const y = coordinate.y + dy;
+
+      if (y < 0 || y >= worldTileCount) {
+        continue;
+      }
+
+      for (let dx = -padding; dx <= padding; dx += 1) {
+        expanded.push({
+          z: coordinate.z,
+          x: normalizeTileX(coordinate.x + dx, coordinate.z),
+          y
+        });
+      }
+    }
+  }
+
+  return expanded;
+}
+
 function sortCoordinates(coordinates: TileCoordinate[]): TileCoordinate[] {
   return coordinates.sort((left, right) => {
     if (left.z !== right.z) {
@@ -119,12 +149,21 @@ export function selectSurfaceTileCoordinates({
     minZoom,
     maxZoom
   });
+  const lowMidZoom = zoom <= minZoom + 1;
+  const coarseSampling = lowMidZoom
+    ? { sampleColumns: 12, sampleRows: 10 }
+    : { sampleColumns: 9, sampleRows: 7 };
+  const detailSampling = lowMidZoom
+    ? { sampleColumns: 13, sampleRows: 11 }
+    : { sampleColumns: 10, sampleRows: 8 };
   const coordinates = computeVisibleTileCoordinates({
     camera,
     viewportWidth,
     viewportHeight,
     radius,
-    zoom
+    zoom,
+    sampleColumns: coarseSampling.sampleColumns,
+    sampleRows: coarseSampling.sampleRows
   });
   const uniqueCoordinates = uniqueSortedCoordinates(coordinates);
   const detailZoom = Math.min(maxZoom, zoom + 1);
@@ -141,13 +180,28 @@ export function selectSurfaceTileCoordinates({
     viewportWidth,
     viewportHeight,
     radius,
-    zoom: detailZoom
+    zoom: detailZoom,
+    sampleColumns: detailSampling.sampleColumns,
+    sampleRows: detailSampling.sampleRows
   }));
 
   if (detailCoordinates.length === 0) {
     return {
       zoom,
       coordinates: uniqueCoordinates
+    };
+  }
+
+  // Prefer a single detailed LOD at seam-prone zoom ranges to avoid visible parent-child boundaries.
+  const useUniformDetailLod = zoom >= maxZoom - 1 || zoom <= minZoom + 1;
+
+  if (useUniformDetailLod) {
+    const paddedDetailCoordinates = zoom <= minZoom + 1
+      ? uniqueSortedCoordinates(expandCoordinates(detailCoordinates, 1))
+      : detailCoordinates;
+    return {
+      zoom,
+      coordinates: paddedDetailCoordinates
     };
   }
 
@@ -162,9 +216,11 @@ export function selectSurfaceTileCoordinates({
   );
   const focusTileX = lngToTileX(centerCartographic.lng, detailZoom);
   const focusTileY = latToTileY(centerCartographic.lat, detailZoom);
-  const focusRadius = 2;
+  const worldTileCount = 2 ** detailZoom;
+  const focusRadius = zoom >= maxZoom - 2 ? 3 : 2;
   const focusedDetailTiles = detailCoordinates.filter((coordinate) => {
-    const dx = Math.abs(coordinate.x - focusTileX);
+    const dxRaw = Math.abs(coordinate.x - focusTileX);
+    const dx = Math.min(dxRaw, worldTileCount - dxRaw);
     const dy = Math.abs(coordinate.y - focusTileY);
     return dx <= focusRadius && dy <= focusRadius;
   });

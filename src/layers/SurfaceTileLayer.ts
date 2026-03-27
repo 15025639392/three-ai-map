@@ -1,8 +1,10 @@
 import {
   BufferGeometry,
+  ClampToEdgeWrapping,
   CanvasTexture,
   Float32BufferAttribute,
   Group,
+  LinearFilter,
   Mesh,
   MeshStandardMaterial,
   Texture
@@ -32,6 +34,7 @@ export interface ElevationTileData {
 interface SurfaceTileEntry {
   promise: Promise<void>;
   mesh: Mesh<BufferGeometry, MeshStandardMaterial> | null;
+  skirtMaskKey: string;
 }
 
 class StaleSurfaceTileError extends Error {
@@ -50,6 +53,7 @@ interface SurfaceTileLayerOptions {
   elevationExaggeration?: number;
   zoomExaggerationBoost?: number;
   skirtDepthMeters?: number;
+  textureUvInsetPixels?: number;
   imageryTemplateUrl?: string;
   elevationTemplateUrl?: string;
   selectTiles?: (options: SurfaceTileSelectionOptions) => SurfaceTileSelection;
@@ -57,16 +61,111 @@ interface SurfaceTileLayerOptions {
   loadElevationTile?: (coordinate: TileCoordinate) => Promise<ElevationTileData>;
 }
 
-function createTexture(source: TileSource): Texture {
-  if (source instanceof HTMLCanvasElement) {
-    const texture = new CanvasTexture(source);
-    texture.needsUpdate = true;
-    return texture;
-  }
+interface TileSkirtMask {
+  top: boolean;
+  right: boolean;
+  bottom: boolean;
+  left: boolean;
+}
 
-  const texture = new Texture(source as Exclude<TileSource, HTMLCanvasElement>);
+function createTexture(source: TileSource): Texture {
+  const texture = source instanceof HTMLCanvasElement
+    ? new CanvasTexture(source)
+    : new Texture(source as Exclude<TileSource, HTMLCanvasElement>);
+  texture.wrapS = ClampToEdgeWrapping;
+  texture.wrapT = ClampToEdgeWrapping;
+  texture.generateMipmaps = false;
+  texture.minFilter = LinearFilter;
+  texture.magFilter = LinearFilter;
   texture.needsUpdate = true;
   return texture;
+}
+
+function getTileSourceSize(source: TileSource): { width: number; height: number } {
+  return {
+    width: "width" in source ? source.width : 256,
+    height: "height" in source ? source.height : 256
+  };
+}
+
+function computeTextureUvInset(source: TileSource, insetPixels: number): number {
+  if (insetPixels <= 0) {
+    return 0;
+  }
+
+  const { width, height } = getTileSourceSize(source);
+  const minDimension = Math.min(width, height);
+
+  if (!Number.isFinite(minDimension) || minDimension <= 1) {
+    return 0;
+  }
+
+  return Math.min(0.25, insetPixels / minDimension);
+}
+
+function tileCoordinateKey(coordinate: TileCoordinate): string {
+  return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
+}
+
+function normalizeTileX(x: number, zoom: number): number {
+  const worldTileCount = 2 ** zoom;
+  return ((x % worldTileCount) + worldTileCount) % worldTileCount;
+}
+
+function createDefaultSkirtMask(): TileSkirtMask {
+  return {
+    top: true,
+    right: true,
+    bottom: true,
+    left: true
+  };
+}
+
+function encodeSkirtMask(mask: TileSkirtMask): string {
+  return `${mask.top ? 1 : 0}${mask.right ? 1 : 0}${mask.bottom ? 1 : 0}${mask.left ? 1 : 0}`;
+}
+
+function computeTileSkirtMasks(coordinates: TileCoordinate[]): Map<string, TileSkirtMask> {
+  const keySet = new Set(coordinates.map((coordinate) => tileCoordinateKey(coordinate)));
+  const masks = new Map<string, TileSkirtMask>();
+
+  for (const coordinate of coordinates) {
+    const worldTileCount = 2 ** coordinate.z;
+    const key = tileCoordinateKey(coordinate);
+    const hasTopNeighbor =
+      coordinate.y > 0 &&
+      keySet.has(tileCoordinateKey({
+        z: coordinate.z,
+        x: coordinate.x,
+        y: coordinate.y - 1
+      }));
+    const hasBottomNeighbor =
+      coordinate.y < worldTileCount - 1 &&
+      keySet.has(tileCoordinateKey({
+        z: coordinate.z,
+        x: coordinate.x,
+        y: coordinate.y + 1
+      }));
+    const hasLeftNeighbor = keySet.has(tileCoordinateKey({
+      z: coordinate.z,
+      x: normalizeTileX(coordinate.x - 1, coordinate.z),
+      y: coordinate.y
+    }));
+    const hasRightNeighbor = keySet.has(tileCoordinateKey({
+      z: coordinate.z,
+      x: normalizeTileX(coordinate.x + 1, coordinate.z),
+      y: coordinate.y
+    }));
+
+    masks.set(key, {
+      top: !hasTopNeighbor,
+      right: !hasRightNeighbor,
+      bottom: !hasBottomNeighbor,
+      left: !hasLeftNeighbor
+    });
+  }
+
+  return masks;
 }
 
 async function defaultTileLoader(
@@ -196,7 +295,9 @@ function buildSurfaceTileGeometry(
   meshSegments: number,
   elevationTile: ElevationTileData | null,
   elevationExaggeration: number,
-  skirtDepthMeters: number
+  skirtDepthMeters: number,
+  textureUvInset: number,
+  skirtMask: TileSkirtMask
 ): BufferGeometry {
   const { west, east, south, north } = getSurfaceTileBounds(coordinate);
   const positions: number[] = [];
@@ -222,7 +323,9 @@ function buildSurfaceTileGeometry(
       );
 
       positions.push(cartesian.x, cartesian.y, cartesian.z);
-      uvs.push(u, 1 - v);
+      const insetU = textureUvInset + u * (1 - textureUvInset * 2);
+      const insetV = textureUvInset + (1 - v) * (1 - textureUvInset * 2);
+      uvs.push(insetU, insetV);
     }
   }
 
@@ -245,10 +348,18 @@ function buildSurfaceTileGeometry(
     const leftEdge = Array.from({ length: rowSize }, (_, index) => index * rowSize);
     const rightEdge = Array.from({ length: rowSize }, (_, index) => index * rowSize + meshSegments);
 
-    appendSkirt(positions, uvs, indices, topEdge, skirtDepth);
-    appendSkirt(positions, uvs, indices, bottomEdge, skirtDepth);
-    appendSkirt(positions, uvs, indices, leftEdge, skirtDepth);
-    appendSkirt(positions, uvs, indices, rightEdge, skirtDepth);
+    if (skirtMask.top) {
+      appendSkirt(positions, uvs, indices, topEdge, skirtDepth);
+    }
+    if (skirtMask.bottom) {
+      appendSkirt(positions, uvs, indices, bottomEdge, skirtDepth);
+    }
+    if (skirtMask.left) {
+      appendSkirt(positions, uvs, indices, leftEdge, skirtDepth);
+    }
+    if (skirtMask.right) {
+      appendSkirt(positions, uvs, indices, rightEdge, skirtDepth);
+    }
   }
 
   const geometry = new BufferGeometry();
@@ -266,6 +377,7 @@ export class SurfaceTileLayer extends Layer {
   private readonly tileSize: number;
   private readonly meshSegments: number;
   private readonly skirtDepthMeters: number;
+  private readonly textureUvInsetPixels: number;
   private readonly elevationExaggeration: number;
   private readonly zoomExaggerationBoost: number;
   private readonly selectTiles;
@@ -288,6 +400,7 @@ export class SurfaceTileLayer extends Layer {
     this.tileSize = options.tileSize ?? 256;
     this.meshSegments = options.meshSegments ?? 16;
     this.skirtDepthMeters = options.skirtDepthMeters ?? 900;
+    this.textureUvInsetPixels = options.textureUvInsetPixels ?? 0.5;
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
     this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
     this.selectTiles = options.selectTiles ?? selectSurfaceTileCoordinates;
@@ -363,11 +476,13 @@ export class SurfaceTileLayer extends Layer {
       maxZoom: this.maxZoom
     });
     const selectionKey = selection.coordinates
-      .map((coordinate) => `${coordinate.z}/${coordinate.x}/${coordinate.y}`)
+      .map((coordinate) => tileCoordinateKey(coordinate))
       .sort()
       .join("|");
+    const tileSkirtMasks = computeTileSkirtMasks(selection.coordinates);
     const selectionResolved = selection.coordinates.every((coordinate) =>
-      this.activeTiles.has(`${coordinate.z}/${coordinate.x}/${coordinate.y}`)
+      this.activeTiles.get(tileCoordinateKey(coordinate))?.skirtMaskKey ===
+      encodeSkirtMask(tileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask())
     );
 
     if (!selectionKey) {
@@ -388,7 +503,7 @@ export class SurfaceTileLayer extends Layer {
 
     this.currentSelectionKey = selectionKey;
     const nextKeys = new Set(
-      selection.coordinates.map((coordinate) => `${coordinate.z}/${coordinate.x}/${coordinate.y}`)
+      selection.coordinates.map((coordinate) => tileCoordinateKey(coordinate))
     );
 
     let removedAny = false;
@@ -404,24 +519,37 @@ export class SurfaceTileLayer extends Layer {
     }
 
     this.readyPromise = Promise.allSettled(
-      selection.coordinates.map((coordinate) => this.ensureTile(coordinate, context.radius))
+      selection.coordinates.map((coordinate) =>
+        this.ensureTile(
+          coordinate,
+          context.radius,
+          tileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask()
+        )
+      )
     ).then(() => undefined);
   }
 
-  private ensureTile(coordinate: TileCoordinate, radius: number): Promise<void> {
-    const key = `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
+  private ensureTile(coordinate: TileCoordinate, radius: number, skirtMask: TileSkirtMask): Promise<void> {
+    const key = tileCoordinateKey(coordinate);
+    const skirtMaskKey = encodeSkirtMask(skirtMask);
     const existing = this.activeTiles.get(key);
 
-    if (existing) {
+    if (existing && existing.skirtMaskKey === skirtMaskKey) {
       return existing.promise;
+    }
+
+    if (existing && existing.skirtMaskKey !== skirtMaskKey) {
+      this.removeTile(key);
     }
 
     const entry: SurfaceTileEntry = {
       mesh: null,
+      skirtMaskKey,
       promise: this.loadTileMesh(
         coordinate,
         radius,
         this.computeElevationExaggeration(coordinate.z),
+        skirtMask,
         key,
         () => this.activeTiles.get(key) === entry
       ).then((mesh) => {
@@ -457,6 +585,7 @@ export class SurfaceTileLayer extends Layer {
     coordinate: TileCoordinate,
     radius: number,
     elevationExaggeration: number,
+    skirtMask: TileSkirtMask,
     key: string,
     isCurrent: () => boolean
   ): Promise<Mesh<BufferGeometry, MeshStandardMaterial>> {
@@ -494,7 +623,9 @@ export class SurfaceTileLayer extends Layer {
       this.meshSegments,
       elevation,
       elevationExaggeration,
-      this.skirtDepthMeters
+      this.skirtDepthMeters,
+      computeTextureUvInset(imagery, this.textureUvInsetPixels),
+      skirtMask
     );
     const texture = createTexture(imagery);
     const material = new MeshStandardMaterial({

@@ -122,7 +122,7 @@ describe("runBasicGlobe", () => {
     getContextSpy.mockRestore();
   });
 
-  it("loads phase-5 surface tiles on top of remote imagery and remote elevation base layers", () => {
+  it("loads phase-5 surface tiles on top of remote imagery base layer", () => {
     const container = document.createElement("div");
     const output = document.createElement("div");
 
@@ -133,13 +133,15 @@ describe("runBasicGlobe", () => {
     expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
       "surface-tiles",
       expect.objectContaining({
+        tileSize: 128,
         maxZoom: 10,
         zoomExaggerationBoost: 6,
-        skirtDepthMeters: 900
+        textureUvInsetPixels: 1,
+        skirtDepthMeters: 1400
       })
     );
     expect(TiledImageryLayerMock).toHaveBeenCalledTimes(1);
     expect(ElevationLayerMock).toHaveBeenCalledTimes(1);
-    expect(addLayerMock).toHaveBeenCalledTimes(3);
+    expect(addLayerMock).toHaveBeenCalledTimes(2);
   });
 });

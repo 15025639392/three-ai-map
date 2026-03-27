@@ -121,9 +121,9 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   const baseImagery = new TiledImageryLayer("imagery-tiles", {
     minZoom: 1,
     maxZoom: 5,
-    tileSize: 256,
+    tileSize: 128,
     cacheSize: 48,
-    concurrency: 2
+    concurrency: 4
   });
   const baseElevation = new ElevationLayer("elevation-tiles", {
     zoom: 3,
@@ -135,16 +135,17 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   const surfaceTiles = new SurfaceTileLayer("surface-tiles", {
     minZoom: 3,
     maxZoom: 10,
-    tileSize: 256,
+    tileSize: 128,
     meshSegments: 16,
     cacheSize: 96,
     concurrency: 6,
     elevationExaggeration: 1,
     zoomExaggerationBoost: 6,
-    skirtDepthMeters: 900
+    textureUvInsetPixels:1,
+    skirtDepthMeters: 1400
   });
   engine.addLayer(baseImagery);
-  engine.addLayer(baseElevation);
+  // engine.addLayer(baseElevation);
   engine.addLayer(surfaceTiles);
   baseImagery.ready().catch(() => {
     engine.removeLayer("imagery-tiles");
@@ -157,47 +158,47 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   surfaceTiles.ready().catch(() => {
     output.textContent = "Surface detail tiles failed, kept base globe fallback";
   });
-  engine.addMarker({
-    id: "shanghai",
-    lng: 121.4737,
-    lat: 31.2304,
-    altitude: 0.03,
-    color: "#ffd166"
-  });
-  engine.addMarker({
-    id: "new-york",
-    lng: -74.006,
-    lat: 40.7128,
-    altitude: 0.03,
-    color: "#6ad8ff"
-  });
-  engine.addMarker({
-    id: "cape-town",
-    lng: 18.4241,
-    lat: -33.9249,
-    altitude: 0.03,
-    color: "#ff8f70"
-  });
-  engine.addPolyline({
-    id: "trade-route",
-    coordinates: [
-      { lng: 121.4737, lat: 31.2304, altitude: 0.02 },
-      { lng: 77.209, lat: 28.6139, altitude: 0.08 },
-      { lng: 18.4241, lat: -33.9249, altitude: 0.02 }
-    ],
-    color: "#8ed6ff"
-  });
-  engine.addPolygon({
-    id: "focus-region",
-    coordinates: [
-      { lng: 95, lat: 10, altitude: 0.015 },
-      { lng: 128, lat: 10, altitude: 0.015 },
-      { lng: 128, lat: 38, altitude: 0.015 },
-      { lng: 95, lat: 38, altitude: 0.015 }
-    ],
-    fillColor: "#36d695",
-    opacity: 0.35
-  });
+  // engine.addMarker({
+  //   id: "shanghai",
+  //   lng: 121.4737,
+  //   lat: 31.2304,
+  //   altitude: 0.03,
+  //   color: "#ffd166"
+  // });
+  // engine.addMarker({
+  //   id: "new-york",
+  //   lng: -74.006,
+  //   lat: 40.7128,
+  //   altitude: 0.03,
+  //   color: "#6ad8ff"
+  // });
+  // engine.addMarker({
+  //   id: "cape-town",
+  //   lng: 18.4241,
+  //   lat: -33.9249,
+  //   altitude: 0.03,
+  //   color: "#ff8f70"
+  // });
+  // engine.addPolyline({
+  //   id: "trade-route",
+  //   coordinates: [
+  //     { lng: 121.4737, lat: 31.2304, altitude: 0.02 },
+  //     { lng: 77.209, lat: 28.6139, altitude: 0.08 },
+  //     { lng: 18.4241, lat: -33.9249, altitude: 0.02 }
+  //   ],
+  //   color: "#8ed6ff"
+  // });
+  // engine.addPolygon({
+  //   id: "focus-region",
+  //   coordinates: [
+  //     { lng: 95, lat: 10, altitude: 0.015 },
+  //     { lng: 128, lat: 10, altitude: 0.015 },
+  //     { lng: 128, lat: 38, altitude: 0.015 },
+  //     { lng: 95, lat: 38, altitude: 0.015 }
+  //   ],
+  //   fillColor: "#36d695",
+  //   opacity: 0.35
+  // });
 
   engine.setView({
     lng: 110,
@@ -232,5 +233,10 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
 
   output.textContent =
     "Phase 5 surface tile meshes are loading. Click a marker, route, region or the globe.";
+
+  if (typeof window !== "undefined") {
+    (window as Window & { __globeEngine?: GlobeEngine }).__globeEngine = engine;
+  }
+
   return engine;
 }

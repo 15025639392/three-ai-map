@@ -171,4 +171,38 @@ describe("SurfaceTileTree", () => {
     });
     expect(uniqueKeys.size).toBeGreaterThan(0);
   });
+
+  it("uses only max-zoom tiles near max zoom around the seam repro coordinate", () => {
+    const maxZoom = 8;
+    const selection = selectSurfaceTileCoordinates({
+      camera: createOrbitCamera(-81.86, 39.07, 0.12, 1),
+      viewportWidth: 1280,
+      viewportHeight: 720,
+      radius: 1,
+      tileSize: 256,
+      minZoom: 1,
+      maxZoom
+    });
+    const zoomLevels = [...new Set(selection.coordinates.map((coordinate) => coordinate.z))];
+
+    expect(selection.zoom).toBeGreaterThanOrEqual(maxZoom - 1);
+    expect(zoomLevels).toEqual([maxZoom]);
+  });
+
+  it("avoids mixed lod boundaries at low-mid zoom for seam-prone views", () => {
+    const selection = selectSurfaceTileCoordinates({
+      camera: createOrbitCamera(-48.425333, -2.33778, 1.724802, 1),
+      viewportWidth: 1280,
+      viewportHeight: 720,
+      radius: 1,
+      tileSize: 256,
+      minZoom: 3,
+      maxZoom: 10
+    });
+    const zoomLevels = [...new Set(selection.coordinates.map((coordinate) => coordinate.z))];
+
+    expect(selection.zoom).toBe(3);
+    expect(zoomLevels).toEqual([4]);
+    expect(selection.coordinates.length).toBeGreaterThan(16);
+  });
 });
