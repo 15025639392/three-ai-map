@@ -49,6 +49,7 @@ export class GlobeEngine {
   private markerLayer: MarkerLayer | null = null;
   private polylineLayer: PolylineLayer | null = null;
   private polygonLayer: PolygonLayer | null = null;
+  private pendingRenderFrameId: number | null = null;
 
   constructor({
     container,
@@ -232,6 +233,7 @@ export class GlobeEngine {
   destroy(): void {
     window.removeEventListener("resize", this.handleResize);
     this.rendererSystem.renderer.domElement.removeEventListener("click", this.handleClick);
+    this.cancelScheduledRender();
     this.layerManager.clear();
     this.cameraController.dispose();
     this.atmosphere.dispose();
@@ -258,6 +260,22 @@ export class GlobeEngine {
   };
 
   private requestRender = (): void => {
-    this.render();
+    if (this.pendingRenderFrameId !== null) {
+      return;
+    }
+
+    this.pendingRenderFrameId = window.requestAnimationFrame(() => {
+      this.pendingRenderFrameId = null;
+      this.render();
+    });
   };
+
+  private cancelScheduledRender(): void {
+    if (this.pendingRenderFrameId === null) {
+      return;
+    }
+
+    window.cancelAnimationFrame(this.pendingRenderFrameId);
+    this.pendingRenderFrameId = null;
+  }
 }

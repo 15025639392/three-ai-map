@@ -32,4 +32,37 @@ describe("GlobeEngine render scheduling", () => {
 
     engine.destroy();
   });
+
+  it("coalesces multiple requestRender calls into a single animation frame", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+    const renderer = engine["rendererSystem"] as FakeRendererSystem;
+    let frameCallback: FrameRequestCallback | null = null;
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        frameCallback = callback;
+        return 1;
+      });
+
+    renderer.render.mockClear();
+    engine["requestRender"]();
+    engine["requestRender"]();
+
+    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(1);
+    expect(renderer.render).not.toHaveBeenCalled();
+
+    expect(frameCallback).not.toBeNull();
+    frameCallback!(16);
+
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+
+    requestAnimationFrameSpy.mockRestore();
+    engine.destroy();
+  });
 });

@@ -4,18 +4,19 @@ export async function mountApp(container: HTMLElement): Promise<void> {
   container.innerHTML = `
     <main class="shell">
       <section class="intro">
-        <p class="eyebrow">Phase 4</p>
+        <p class="eyebrow">Phase 5</p>
         <h1>Three.js Globe Engine</h1>
         <p>
-          View-driven imagery LOD, real elevation terrain, atmospheric rendering, unified events,
-          inertia controls and lazy-loaded runtime are now wired into a single fourth-phase demo.
+          Unified surface tile meshes now combine imagery and DEM on curved globe patches over a
+          lightweight base globe, while the runtime keeps atmospheric rendering, unified events and
+          inertia controls.
         </p>
       </section>
       <section class="workspace">
         <div class="viewport" id="globe-stage"></div>
         <aside class="panel">
           <h2>Interaction</h2>
-          <p>Drag to orbit with inertia, wheel to zoom with inertia, cross the poles freely, then inspect adaptive tiles, real elevation and unified click events with lng/lat coordinates.</p>
+          <p>Drag to orbit with inertia, wheel to zoom with inertia, cross the poles freely, then inspect phase-5 surface tile meshes, deep zoom imagery, terrain detail and unified click events with lng/lat coordinates.</p>
           <div class="readout" id="pick-output">Loading globe runtime...</div>
         </aside>
       </section>

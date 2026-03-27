@@ -1,8 +1,7 @@
 import { CanvasTexture } from "three";
 import { GlobeEngine } from "../src/engine/GlobeEngine";
-import { ElevationLayer } from "../src/layers/ElevationLayer";
 import { ImageryLayer } from "../src/layers/ImageryLayer";
-import { TiledImageryLayer } from "../src/layers/TiledImageryLayer";
+import { SurfaceTileLayer } from "../src/layers/SurfaceTileLayer";
 
 function createProceduralEarthTexture(size = 2048): CanvasTexture {
   const canvas = document.createElement("canvas");
@@ -117,30 +116,21 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     radius: 1,
     background: "#020611"
   });
-  const imagery = new TiledImageryLayer("imagery-tiles", {
-    minZoom: 1,
-    maxZoom: 5,
-    tileSize: 128,
-    cacheSize: 48,
-    concurrency: 4
-  });
-  const elevation = new ElevationLayer("elevation-tiles", {
-    zoom: 3,
+  const baseImagery = new ImageryLayer("imagery-base", createProceduralEarthTexture());
+  const surfaceTiles = new SurfaceTileLayer("surface-tiles", {
+    minZoom: 3,
+    maxZoom: 8,
     tileSize: 256,
-    cacheSize: 24,
-    concurrency: 4,
-    exaggeration: 1.15
+    meshSegments: 16,
+    cacheSize: 96,
+    concurrency: 6,
+    elevationExaggeration: 1.15
   });
 
-  engine.addLayer(imagery);
-  engine.addLayer(elevation);
-  imagery.ready().catch(() => {
-    engine.removeLayer("imagery-tiles");
-    engine.addLayer(new ImageryLayer("imagery-fallback", createProceduralEarthTexture()));
-    output.textContent = "Online tiles failed, switched to fallback imagery";
-  });
-  elevation.ready().catch(() => {
-    output.textContent = "Real elevation failed, kept procedural terrain fallback";
+  engine.addLayer(baseImagery);
+  engine.addLayer(surfaceTiles);
+  surfaceTiles.ready().catch(() => {
+    output.textContent = "Surface detail tiles failed, kept lightweight base globe";
   });
   engine.addMarker({
     id: "shanghai",
@@ -216,6 +206,6 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   });
 
   output.textContent =
-    "Adaptive tiles and real elevation are loading. Click a marker, route, region or the globe.";
+    "Phase 5 surface tile meshes are loading. Click a marker, route, region or the globe.";
   return engine;
 }
