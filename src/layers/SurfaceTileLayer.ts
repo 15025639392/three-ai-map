@@ -47,6 +47,7 @@ interface SurfaceTileLayerOptions {
   cacheSize?: number;
   concurrency?: number;
   elevationExaggeration?: number;
+  zoomExaggerationBoost?: number;
   imageryTemplateUrl?: string;
   elevationTemplateUrl?: string;
   selectTiles?: (options: SurfaceTileSelectionOptions) => SurfaceTileSelection;
@@ -217,6 +218,7 @@ export class SurfaceTileLayer extends Layer {
   private readonly tileSize: number;
   private readonly meshSegments: number;
   private readonly elevationExaggeration: number;
+  private readonly zoomExaggerationBoost: number;
   private readonly selectTiles;
   private readonly imageryCache: TileCache<TileSource>;
   private readonly elevationCache: TileCache<ElevationTileData>;
@@ -236,6 +238,7 @@ export class SurfaceTileLayer extends Layer {
     this.tileSize = options.tileSize ?? 256;
     this.meshSegments = options.meshSegments ?? 16;
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
+    this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
     this.selectTiles = options.selectTiles ?? selectSurfaceTileCoordinates;
     this.imageryCache = new TileCache<TileSource>(options.cacheSize ?? 96);
     this.elevationCache = new TileCache<ElevationTileData>(options.cacheSize ?? 96);
@@ -348,11 +351,13 @@ export class SurfaceTileLayer extends Layer {
     }
 
     this.readyPromise = Promise.allSettled(
-      selection.coordinates.map((coordinate) => this.ensureTile(coordinate, context.radius))
+      selection.coordinates.map((coordinate) =>
+        this.ensureTile(coordinate, context.radius, selection.zoom)
+      )
     ).then(() => undefined);
   }
 
-  private ensureTile(coordinate: TileCoordinate, radius: number): Promise<void> {
+  private ensureTile(coordinate: TileCoordinate, radius: number, selectionZoom: number): Promise<void> {
     const key = `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
     const existing = this.activeTiles.get(key);
 
@@ -365,6 +370,7 @@ export class SurfaceTileLayer extends Layer {
       promise: this.loadTileMesh(
         coordinate,
         radius,
+        this.computeElevationExaggeration(selectionZoom),
         key,
         () => this.activeTiles.get(key) === entry
       ).then((mesh) => {
@@ -399,6 +405,7 @@ export class SurfaceTileLayer extends Layer {
   private async loadTileMesh(
     coordinate: TileCoordinate,
     radius: number,
+    elevationExaggeration: number,
     key: string,
     isCurrent: () => boolean
   ): Promise<Mesh<BufferGeometry, MeshStandardMaterial>> {
@@ -435,7 +442,7 @@ export class SurfaceTileLayer extends Layer {
       radius,
       this.meshSegments,
       elevation,
-      this.elevationExaggeration
+      elevationExaggeration
     );
     const texture = createTexture(imagery);
     const material = new MeshStandardMaterial({
@@ -495,5 +502,17 @@ export class SurfaceTileLayer extends Layer {
       this.renderInvalidationQueued = false;
       this.context?.requestRender?.();
     });
+  }
+
+  private computeElevationExaggeration(zoom: number): number {
+    if (this.zoomExaggerationBoost <= 0 || this.maxZoom <= this.minZoom) {
+      return this.elevationExaggeration;
+    }
+
+    const normalizedZoom = Math.max(
+      0,
+      Math.min(1, (zoom - this.minZoom) / (this.maxZoom - this.minZoom))
+    );
+    return this.elevationExaggeration * (1 + normalizedZoom * this.zoomExaggerationBoost);
   }
 }

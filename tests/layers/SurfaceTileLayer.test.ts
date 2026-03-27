@@ -1,4 +1,4 @@
-import { PerspectiveCamera, Scene } from "three";
+import { Mesh, PerspectiveCamera, Scene } from "three";
 import { GlobeMesh } from "../../src/globe/GlobeMesh";
 import {
   ElevationTileData,
@@ -43,6 +43,23 @@ function createDeferred<T>() {
     resolve,
     reject
   };
+}
+
+function getFirstVertexRadius(scene: Scene, layerId: string): number | null {
+  const group = scene.getObjectByName(layerId);
+  const mesh = group?.children[0] as Mesh | undefined;
+  const positions = mesh
+    ? (mesh.geometry.getAttribute("position").array as Float32Array)
+    : null;
+
+  if (!positions) {
+    return null;
+  }
+
+  const x = positions[0];
+  const y = positions[1];
+  const z = positions[2];
+  return Math.sqrt(x * x + y * y + z * z);
 }
 
 describe("SurfaceTileLayer", () => {
@@ -234,5 +251,110 @@ describe("SurfaceTileLayer", () => {
     expect(elevationLoader).toHaveBeenCalledWith(
       expect.objectContaining({ z: 2, x: 3, y: 1 })
     );
+  });
+
+  it("drapes imagery mesh directly on terrain geometry by default", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 1,
+      elevationExaggeration: 1,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      }),
+      loadImageryTile: async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(0)
+    });
+
+    layer.onAdd({
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement
+    });
+    await layer.ready();
+
+    const radius = getFirstVertexRadius(scene, "surface-tiles");
+    expect(radius).not.toBeNull();
+
+    if (radius === null) {
+      return;
+    }
+    expect(radius).toBeCloseTo(1, 6);
+  });
+
+  it("increases terrain relief at higher zoom when zoomExaggerationBoost is enabled", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const camera = createCamera(2.2);
+    const baseConfig = {
+      minZoom: 1,
+      maxZoom: 8,
+      meshSegments: 1,
+      elevationExaggeration: 1,
+      zoomExaggerationBoost: 2,
+      loadImageryTile: async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(1000)
+    };
+
+    const lowZoomScene = new Scene();
+    const lowZoomLayer = new SurfaceTileLayer("surface-low", {
+      ...baseConfig,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      })
+    });
+    lowZoomLayer.onAdd({
+      scene: lowZoomScene,
+      camera,
+      globe: new GlobeMesh({ radius: 1 }),
+      radius: 1,
+      rendererElement
+    });
+    await lowZoomLayer.ready();
+    const lowRadius = getFirstVertexRadius(lowZoomScene, "surface-low");
+
+    const highZoomScene = new Scene();
+    const highZoomLayer = new SurfaceTileLayer("surface-high", {
+      ...baseConfig,
+      selectTiles: () => ({
+        zoom: 8,
+        coordinates: [{ z: 8, x: 180, y: 100 }]
+      })
+    });
+    highZoomLayer.onAdd({
+      scene: highZoomScene,
+      camera,
+      globe: new GlobeMesh({ radius: 1 }),
+      radius: 1,
+      rendererElement
+    });
+    await highZoomLayer.ready();
+    const highRadius = getFirstVertexRadius(highZoomScene, "surface-high");
+
+    expect(lowRadius).not.toBeNull();
+    expect(highRadius).not.toBeNull();
+
+    if (lowRadius === null || highRadius === null) {
+      return;
+    }
+
+    expect(highRadius).toBeGreaterThan(lowRadius);
   });
 });

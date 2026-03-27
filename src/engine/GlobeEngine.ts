@@ -55,7 +55,7 @@ export class GlobeEngine {
     container,
     radius = 1,
     background = "#03060d",
-    terrainStrength = radius * 0.06,
+    terrainStrength = 0,
     camera,
     rendererFactory = createDefaultRenderer
   }: GlobeEngineOptions) {

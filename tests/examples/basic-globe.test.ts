@@ -1,6 +1,7 @@
 const {
   GlobeEngineMock,
   addLayerMock,
+  removeLayerMock,
   setViewMock,
   onMock,
   addMarkerMock,
@@ -12,6 +13,7 @@ const {
   ElevationLayerMock
 } = vi.hoisted(() => {
   const addLayerMock = vi.fn();
+  const removeLayerMock = vi.fn();
   const setViewMock = vi.fn();
   const onMock = vi.fn();
   const addMarkerMock = vi.fn();
@@ -19,6 +21,7 @@ const {
   const addPolygonMock = vi.fn();
   const GlobeEngineMock = vi.fn().mockImplementation(() => ({
     addLayer: addLayerMock,
+    removeLayer: removeLayerMock,
     setView: setViewMock,
     on: onMock,
     addMarker: addMarkerMock,
@@ -45,6 +48,7 @@ const {
   return {
     GlobeEngineMock,
     addLayerMock,
+    removeLayerMock,
     setViewMock,
     onMock,
     addMarkerMock,
@@ -84,6 +88,7 @@ describe("runBasicGlobe", () => {
 
   beforeEach(() => {
     addLayerMock.mockClear();
+    removeLayerMock.mockClear();
     setViewMock.mockClear();
     onMock.mockClear();
     addMarkerMock.mockClear();
@@ -117,16 +122,22 @@ describe("runBasicGlobe", () => {
     getContextSpy.mockRestore();
   });
 
-  it("uses the lightweight phase-5 base globe plus unified surface tile layer instead of stacking phase-4 heavy layers", () => {
+  it("loads phase-5 surface tiles on top of remote imagery and remote elevation base layers", () => {
     const container = document.createElement("div");
     const output = document.createElement("div");
 
     runBasicGlobe(container, output);
 
-    expect(ImageryLayerMock).toHaveBeenCalledTimes(1);
+    expect(ImageryLayerMock).not.toHaveBeenCalled();
     expect(SurfaceTileLayerMock).toHaveBeenCalledTimes(1);
-    expect(TiledImageryLayerMock).not.toHaveBeenCalled();
-    expect(ElevationLayerMock).not.toHaveBeenCalled();
-    expect(addLayerMock).toHaveBeenCalledTimes(2);
+    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
+      "surface-tiles",
+      expect.objectContaining({
+        zoomExaggerationBoost: 6
+      })
+    );
+    expect(TiledImageryLayerMock).toHaveBeenCalledTimes(1);
+    expect(ElevationLayerMock).toHaveBeenCalledTimes(1);
+    expect(addLayerMock).toHaveBeenCalledTimes(3);
   });
 });

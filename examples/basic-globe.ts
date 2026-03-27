@@ -1,7 +1,9 @@
 import { CanvasTexture } from "three";
 import { GlobeEngine } from "../src/engine/GlobeEngine";
+import { ElevationLayer } from "../src/layers/ElevationLayer";
 import { ImageryLayer } from "../src/layers/ImageryLayer";
 import { SurfaceTileLayer } from "../src/layers/SurfaceTileLayer";
+import { TiledImageryLayer } from "../src/layers/TiledImageryLayer";
 
 function createProceduralEarthTexture(size = 2048): CanvasTexture {
   const canvas = document.createElement("canvas");
@@ -116,7 +118,20 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     radius: 1,
     background: "#020611"
   });
-  const baseImagery = new ImageryLayer("imagery-base", createProceduralEarthTexture());
+  const baseImagery = new TiledImageryLayer("imagery-tiles", {
+    minZoom: 1,
+    maxZoom: 5,
+    tileSize: 256,
+    cacheSize: 48,
+    concurrency: 2
+  });
+  const baseElevation = new ElevationLayer("elevation-tiles", {
+    zoom: 3,
+    tileSize: 256,
+    cacheSize: 24,
+    concurrency: 4,
+    exaggeration: 1
+  });
   const surfaceTiles = new SurfaceTileLayer("surface-tiles", {
     minZoom: 3,
     maxZoom: 8,
@@ -124,13 +139,22 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     meshSegments: 16,
     cacheSize: 96,
     concurrency: 6,
-    elevationExaggeration: 1.15
+    elevationExaggeration: 1,
+    zoomExaggerationBoost: 6
   });
-
   engine.addLayer(baseImagery);
+  engine.addLayer(baseElevation);
   engine.addLayer(surfaceTiles);
+  baseImagery.ready().catch(() => {
+    engine.removeLayer("imagery-tiles");
+    engine.addLayer(new ImageryLayer("imagery-fallback", createProceduralEarthTexture()));
+    output.textContent = "Online tiles failed, switched to fallback imagery";
+  });
+  baseElevation.ready().catch(() => {
+    output.textContent = "Real elevation failed, kept procedural terrain fallback";
+  });
   surfaceTiles.ready().catch(() => {
-    output.textContent = "Surface detail tiles failed, kept lightweight base globe";
+    output.textContent = "Surface detail tiles failed, kept base globe fallback";
   });
   engine.addMarker({
     id: "shanghai",
