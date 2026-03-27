@@ -248,11 +248,16 @@
   - 重投影循环改为“当前轮完成后再补一轮”，避免加载中反复从第 `0` 行重启。
   - 去掉每轮全量 `clearRect`，减少主线程额外开销。
   - 新增/更新回归测试：高 `maxZoom` 下 atlas 限幅与缩放上限生效。
+  - 完成按脏行裁剪的增量重投影：每个新瓦片仅标记受影响纬度行区间，按区间队列合并后分帧执行。
+  - 完成重投影微批队列：弃用“整幅重启式”重投影，改为区间游标推进，避免高缩放时重复全量扫描。
+  - 新增回归测试：首轮全量投影后，后续只重算脏行，不再整幅重算。
 - 当前结论：
   - 黑屏问题已解决。
-  - 高缩放卡顿仍存在，瓶颈已进入“重投影裁剪策略”阶段，不再是简单参数问题。
+  - 高缩放卡顿已从“整幅重投影”退化到“脏区增量重投影”路径，交互阻塞风险显著降低。
 - 下一步（唯一）：
-  - 实现按脏纬度行裁剪的增量重投影（dirty-row projection），仅重算受新增瓦片影响的行区间。
+  - 若继续推进第六阶段性能项，执行重投影与 DEM 解码 worker 化，进一步减少主线程占用。
 - 本轮验证：
   - `npm run test:run -- tests/layers/TiledImageryLayer.test.ts` -> 通过（8/8）
   - `npm run typecheck` -> 通过
+  - `npm run test:run -- tests/layers/TiledImageryLayer.test.ts` -> 通过（9/9，含 dirty-row 回归）
+  - `npm run test:run` -> 仅 `tests/examples/basic-globe.test.ts` 失败，原因是 demo 中临时注释 `baseElevation/surfaceTiles` 导致 `addLayer` 次数断言不匹配

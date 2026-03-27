@@ -498,8 +498,10 @@ describe("TiledImageryLayer", () => {
         return deferred.promise;
       }
     });
-    vi.spyOn(layer as never, "drawTileToMercator").mockImplementation(() => undefined);
-    vi.spyOn(layer as never, "scheduleProjection").mockImplementation(() => undefined);
+    vi.spyOn(layer as never, "drawTileToMercator").mockImplementation(
+      () => ({ top: 0, bottom: 1 }) as never
+    );
+    vi.spyOn(layer as never, "scheduleProjectionRange").mockImplementation(() => undefined);
 
     layer.onAdd({ scene, camera, globe, radius: 1, rendererElement });
     await Promise.resolve();
@@ -567,6 +569,69 @@ describe("TiledImageryLayer", () => {
     expect((layer as unknown as { mercatorCanvas: HTMLCanvasElement }).mercatorCanvas.height).toBe(4096);
     expect(Math.max(...requestedZooms)).toBeLessThanOrEqual(5);
 
+    getContext.mockRestore();
+  });
+
+  it("reprojects only dirty rows after the initial full projection pass", async () => {
+    const animationFrame = installAnimationFrameMock();
+    const outputDrawImage = vi.fn();
+    const outputContext = {
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      drawImage: outputDrawImage,
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      fillStyle: ""
+    } as unknown as CanvasRenderingContext2D;
+    const mercatorContext = {
+      drawImage: vi.fn()
+    } as unknown as CanvasRenderingContext2D;
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockImplementation(function (this: HTMLCanvasElement) {
+        return this.height < this.width ? outputContext : mercatorContext;
+      });
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = new PerspectiveCamera(45, 16 / 9, 0.1, 1000);
+    camera.position.set(3, 0, 0);
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+    const layer = new TiledImageryLayer("tiles", {
+      minZoom: 1,
+      maxZoom: 5,
+      tileSize: 32,
+      cacheSize: 8,
+      projectionRowsPerFrame: 256,
+      loadTile: async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 32;
+        canvas.height = 32;
+        return canvas;
+      }
+    });
+
+    layer.onAdd({ scene, camera, globe, radius: 1, rendererElement });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    animationFrame.runFrame();
+    await Promise.resolve();
+    animationFrame.runFrame();
+    await layer.ready();
+
+    outputDrawImage.mockClear();
+
+    (layer as unknown as { scheduleProjectionRange: (start: number, end: number) => void })
+      .scheduleProjectionRange(120, 148);
+    const flushPromise = (layer as unknown as { flushProjection: () => Promise<void> }).flushProjection();
+    animationFrame.runFrame();
+    await flushPromise;
+
+    expect(outputDrawImage).toHaveBeenCalledTimes(28);
+
+    animationFrame.restore();
     getContext.mockRestore();
   });
 });

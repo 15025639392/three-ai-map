@@ -59,6 +59,12 @@ function computeEffectiveMaxZoom(maxZoom: number, tileSize: number, maxCanvasDim
   return Math.min(maxZoom, safeZoom);
 }
 
+function latitudeFromMercatorY(sourceY: number, height: number): number {
+  const normalizedY = sourceY / height;
+  const mercator = (0.5 - normalizedY) * (2 * Math.PI);
+  return (Math.atan(Math.sinh(mercator)) * 180) / Math.PI;
+}
+
 function mercatorYFromLatitude(latitude: number, height: number): number {
   const clamped = Math.max(-85.05112878, Math.min(85.05112878, latitude));
   const radians = (clamped * Math.PI) / 180;
@@ -120,8 +126,9 @@ export class TiledImageryLayer extends Layer {
   private readyPromise: Promise<void> = Promise.resolve();
   private currentViewKey = "";
   private projectionFrameId: number | null = null;
-  private projectionDirty = false;
-  private projectionRow = 0;
+  private hasProjectedOnce = false;
+  private readonly dirtyProjectionRanges: Array<{ start: number; end: number }> = [];
+  private activeProjectionRange: { start: number; end: number; cursor: number } | null = null;
   private readonly projectionResolvers: Array<() => void> = [];
 
   constructor(id: string, options: TiledImageryLayerOptions = {}) {
@@ -244,12 +251,16 @@ export class TiledImageryLayer extends Layer {
       this.cache.set(key, tile);
     }
 
-    this.drawTileToMercator(tile, coordinate);
+    const mercatorBounds = this.drawTileToMercator(tile, coordinate);
     this.drawnTileKeys.add(key);
-    this.scheduleProjection();
+    const dirtyRows = this.computeDirtyOutputRowRange(mercatorBounds.top, mercatorBounds.bottom);
+    this.scheduleProjectionRange(dirtyRows.start, dirtyRows.end);
   }
 
-  private drawTileToMercator(tile: TileSource, coordinate: TileCoordinate): void {
+  private drawTileToMercator(
+    tile: TileSource,
+    coordinate: TileCoordinate
+  ): { top: number; bottom: number } {
     const context = this.mercatorCanvas.getContext("2d");
 
     if (!context) {
@@ -266,6 +277,12 @@ export class TiledImageryLayer extends Layer {
       targetSize,
       targetSize
     );
+
+    const top = coordinate.y * targetSize;
+    return {
+      top,
+      bottom: top + targetSize
+    };
   }
 
   private projectMercatorToEquirectangular(startRow: number, endRow: number): void {
@@ -293,12 +310,72 @@ export class TiledImageryLayer extends Layer {
     }
   }
 
-  private scheduleProjection(): void {
-    this.projectionDirty = true;
-    if (this.projectionRow >= this.outputCanvas.height) {
-      this.projectionRow = 0;
+  private computeDirtyOutputRowRange(
+    mercatorTop: number,
+    mercatorBottom: number
+  ): { start: number; end: number } {
+    const outputHeight = this.outputCanvas.height;
+    const northLatitude = latitudeFromMercatorY(mercatorTop, this.mercatorCanvas.height);
+    const southLatitude = latitudeFromMercatorY(mercatorBottom, this.mercatorCanvas.height);
+    const northRow = Math.floor(((90 - northLatitude) / 180) * outputHeight) - 1;
+    const southRow = Math.ceil(((90 - southLatitude) / 180) * outputHeight) + 1;
+    const rangeStart = Math.max(0, Math.min(outputHeight, Math.min(northRow, southRow)));
+    const rangeEnd = Math.max(0, Math.min(outputHeight, Math.max(northRow, southRow)));
+    const clampedEnd = Math.max(rangeStart + 1, rangeEnd);
+
+    return {
+      start: rangeStart,
+      end: clampedEnd
+    };
+  }
+
+  private scheduleProjectionRange(startRow: number, endRow: number): void {
+    const clampedStart = Math.max(0, Math.min(this.outputCanvas.height, Math.floor(startRow)));
+    const clampedEnd = Math.max(0, Math.min(this.outputCanvas.height, Math.ceil(endRow)));
+
+    if (clampedEnd <= clampedStart) {
+      return;
     }
+
+    if (!this.hasProjectedOnce) {
+      this.insertDirtyProjectionRange(0, this.outputCanvas.height);
+    } else {
+      this.insertDirtyProjectionRange(clampedStart, clampedEnd);
+    }
+
     this.requestProjectionFrame();
+  }
+
+  private insertDirtyProjectionRange(start: number, end: number): void {
+    let mergedStart = start;
+    let mergedEnd = end;
+    const mergedRanges: Array<{ start: number; end: number }> = [];
+    let inserted = false;
+
+    for (const range of this.dirtyProjectionRanges) {
+      if (range.end < mergedStart) {
+        mergedRanges.push(range);
+        continue;
+      }
+
+      if (mergedEnd < range.start) {
+        if (!inserted) {
+          mergedRanges.push({ start: mergedStart, end: mergedEnd });
+          inserted = true;
+        }
+        mergedRanges.push(range);
+        continue;
+      }
+
+      mergedStart = Math.min(mergedStart, range.start);
+      mergedEnd = Math.max(mergedEnd, range.end);
+    }
+
+    if (!inserted) {
+      mergedRanges.push({ start: mergedStart, end: mergedEnd });
+    }
+
+    this.dirtyProjectionRanges.splice(0, this.dirtyProjectionRanges.length, ...mergedRanges);
   }
 
   private requestProjectionFrame(): void {
@@ -314,27 +391,38 @@ export class TiledImageryLayer extends Layer {
         throw new Error("Output canvas context is not available");
       }
 
-      if (this.projectionRow === 0) {
-        // Start a new projection pass using the latest available mercator data.
-        this.projectionDirty = false;
+      if (!this.activeProjectionRange) {
+        const nextRange = this.dirtyProjectionRanges.shift();
+
+        if (!nextRange) {
+          this.resolveProjectionPromises();
+          return;
+        }
+
+        this.activeProjectionRange = {
+          start: nextRange.start,
+          end: nextRange.end,
+          cursor: nextRange.start
+        };
       }
 
+      const activeRange = this.activeProjectionRange;
       const endRow = Math.min(
-        this.outputCanvas.height,
-        this.projectionRow + this.projectionRowsPerFrame
+        activeRange.end,
+        activeRange.cursor + this.projectionRowsPerFrame
       );
-      this.projectMercatorToEquirectangular(this.projectionRow, endRow);
-      this.projectionRow = endRow;
+      this.projectMercatorToEquirectangular(activeRange.cursor, endRow);
+      activeRange.cursor = endRow;
 
-      if (this.projectionRow < this.outputCanvas.height) {
+      if (activeRange.cursor < activeRange.end) {
         this.requestProjectionFrame();
         return;
       }
 
-      // New tiles may arrive during an ongoing pass. Complete current pass first,
-      // then run exactly one follow-up pass instead of repeatedly restarting from row 0.
-      if (this.projectionDirty) {
-        this.projectionRow = 0;
+      this.activeProjectionRange = null;
+      this.hasProjectedOnce = true;
+
+      if (this.dirtyProjectionRanges.length > 0) {
         this.requestProjectionFrame();
         return;
       }
@@ -346,11 +434,15 @@ export class TiledImageryLayer extends Layer {
   }
 
   private flushProjection(): Promise<void> {
-    if (!this.projectionDirty && this.projectionFrameId === null) {
+    if (
+      this.projectionFrameId === null &&
+      this.activeProjectionRange === null &&
+      this.dirtyProjectionRanges.length === 0
+    ) {
       return Promise.resolve();
     }
 
-    if (this.projectionDirty && this.projectionFrameId === null) {
+    if (this.projectionFrameId === null) {
       this.requestProjectionFrame();
     }
 
