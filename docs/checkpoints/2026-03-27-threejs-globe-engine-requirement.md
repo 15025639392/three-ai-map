@@ -4,7 +4,7 @@
 
 - 任务标题：使用 three.js 从 0 开发地球引擎需求规划
 - 技能类型：`需求`
-- 当前阶段：第三阶段实现完成并已验证
+- 当前阶段：第四阶段实现完成并已验证
 - 更新时间：2026-03-27
 - 负责人：Codex
 
@@ -49,10 +49,15 @@
   - [x] 最新全量验证通过：`19` 个测试文件、`31` 个测试全部通过
   - [x] 增加旋转/缩放惯性，按手势和滚轮速度生成阻尼续动
   - [x] 最新全量验证通过：`19` 个测试文件、`33` 个测试全部通过
+  - [x] 完成第四阶段视角驱动影像能力：屏幕空间可见区域瓦片调度与 altitude 驱动 LOD
+  - [x] 完成第四阶段真实高程能力：在线 DEM 高程层驱动球体几何位移
+  - [x] 完成第四阶段资源拆包：示例入口改为动态导入，生成异步 chunk
+  - [x] 更新第四阶段 demo、README 和验收文档
+  - [x] 第四阶段全量验证通过：`21` 个测试文件、`40` 个测试全部通过
 - 进行中：
   - [ ] 无
 - 下一步（唯一）：
-  - [ ] 若继续推进，规划第四阶段：真实高程、视锥/屏幕空间瓦片调度、LOD 与资源拆包
+  - [ ] 若继续推进，规划第五阶段：球面 tile mesh、地形与影像统一四叉树、遮挡裁剪与更精细资源生命周期
 
 ## 3) 关键结论与决策
 
@@ -128,6 +133,15 @@
 - 决策 24：旋转和缩放都采用速度驱动的惯性模型，力度越大，释放后的续动越明显。
   - 原因：用户要求交互接近真实地球仪，而不是固定时长或固定幅度的缓动。
   - 影响：`CameraController` 现在会从拖拽角速度和滚轮缩放速度采样初速度，再通过阻尼衰减短时驱动内部动画循环。
+- 决策 25：第四阶段的影像升级优先保留“单张贴球纹理”架构，只把瓦片来源从全局预取改成视角驱动的增量拉取。
+  - 原因：这样能在不重写球面 tile mesh 和 shader 的前提下，完成视锥/屏幕空间瓦片调度与 LOD。
+  - 影响：`TiledImageryLayer` 现在会根据当前视角与屏幕尺寸选择 zoom 和可见 tile 集合，再增量绘制到统一纹理。
+- 决策 26：真实高程采用在线 Terrarium DEM 作为数据源，并在球体宿主上做几何位移。
+  - 原因：用户要求进入真实高程阶段，同时又要尽量少依赖外部库；在线高程瓦片能最小化引擎内部复杂度。
+  - 影响：新增 `ElevationLayer` 和 `GlobeMesh.setElevationSampler()`，DEM 成功时替换程序化地形，失败时保留回退。
+- 决策 27：资源拆包的第一刀放在示例入口，而不是核心引擎或单个图层。
+  - 原因：`examples/basic-globe.ts` 已经自然串起了 `three`、引擎装配和图层能力，是当前结构下收益最高且改动最小的切分点。
+  - 影响：`src/main.ts` 现已通过动态导入加载 demo，Rspack 产物新增异步 chunk，主入口变成轻量壳层。
 
 ## 4) 变更与证据
 
@@ -179,6 +193,12 @@
   - `headless Chrome inertia verification` -> 旋转与缩放在 350ms 延迟截图中都继续变化：
     - rotation: `15860deeaf544b713c2aff985136eb3d2ba982bcad9ce7d36b4068cfa43d6d33` -> `62033ad087baaecd85c32d694ec848855d6f839bf8c3ae98a7600f2a83aa65e0`
     - zoom: `5b978c9aec44517e16d7799b9ddf8c19d57b858bae459193bfcfdfe56f540ece` -> `47f2ce34e491241f93c92a3cb96dd562096c5ae54718d3b2575cbe1ed0df8991`
+  - `npm run test:run -- tests/tiles/TileViewport.test.ts tests/layers/TiledImageryLayer.test.ts` -> 视口 LOD、可见瓦片裁剪与缓存复用回归测试通过
+  - `npm run test:run -- tests/globe/GlobeMesh.test.ts tests/layers/ElevationLayer.test.ts` -> 真实高程位移与 DEM 图层接入回归测试通过
+  - `npm run test:run` -> `21` 个测试文件、`40` 个测试全部通过
+  - `npm run typecheck` -> 通过
+  - `npm run build` -> 构建通过，产物包含异步 chunk，`main.js` 约 `505 KiB`
+  - `headless Chrome phase 4 verification` -> 页面正确加载第四阶段 demo，并实际发起异步 chunk、OSM 影像瓦片和 Terrarium 高程瓦片请求
 - 关键日志/截图/报告路径：
   - `docs/plans/2026-03-27-threejs-globe-engine-design.md`
   - `docs/plans/2026-03-27-threejs-globe-engine.md`
@@ -191,6 +211,7 @@
   - `/tmp/three-map-inertia-rotation-delayed.png`
   - `/tmp/three-map-inertia-zoom-immediate.png`
   - `/tmp/three-map-inertia-zoom-delayed.png`
+  - `/tmp/three-map-phase4.png`
 
 ## 5) 风险与阻塞
 

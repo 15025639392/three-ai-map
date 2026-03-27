@@ -37,7 +37,8 @@ export default defineConfig({
   },
   plugins: [new HtmlRspackPlugin({ template: "./index.html" })],
   output: {
-    clean: true
+    clean: true,
+    chunkFilename: "chunks/[name].[contenthash:8].js"
   },
   devServer: {
     host: "0.0.0.0",

@@ -1,5 +1,6 @@
 import { CanvasTexture } from "three";
 import { GlobeEngine } from "../src/engine/GlobeEngine";
+import { ElevationLayer } from "../src/layers/ElevationLayer";
 import { ImageryLayer } from "../src/layers/ImageryLayer";
 import { TiledImageryLayer } from "../src/layers/TiledImageryLayer";
 
@@ -117,17 +118,29 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     background: "#020611"
   });
   const imagery = new TiledImageryLayer("imagery-tiles", {
-    zoom: 2,
+    minZoom: 1,
+    maxZoom: 5,
     tileSize: 128,
-    cacheSize: 24,
+    cacheSize: 48,
     concurrency: 4
+  });
+  const elevation = new ElevationLayer("elevation-tiles", {
+    zoom: 3,
+    tileSize: 256,
+    cacheSize: 24,
+    concurrency: 4,
+    exaggeration: 1.15
   });
 
   engine.addLayer(imagery);
+  engine.addLayer(elevation);
   imagery.ready().catch(() => {
     engine.removeLayer("imagery-tiles");
     engine.addLayer(new ImageryLayer("imagery-fallback", createProceduralEarthTexture()));
     output.textContent = "Online tiles failed, switched to fallback imagery";
+  });
+  elevation.ready().catch(() => {
+    output.textContent = "Real elevation failed, kept procedural terrain fallback";
   });
   engine.addMarker({
     id: "shanghai",
@@ -202,6 +215,7 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     output.textContent = `lng:${result.cartographic.lng.toFixed(2)} lat:${result.cartographic.lat.toFixed(2)}`;
   });
 
-  output.textContent = "Online tiles loading. Click a marker, route, region or the globe.";
+  output.textContent =
+    "Adaptive tiles and real elevation are loading. Click a marker, route, region or the globe.";
   return engine;
 }

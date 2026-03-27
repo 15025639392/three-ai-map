@@ -1,23 +1,22 @@
 import "./styles.css";
-import { runBasicGlobe } from "../examples/basic-globe";
 
-export function mountApp(container: HTMLElement): void {
+export async function mountApp(container: HTMLElement): Promise<void> {
   container.innerHTML = `
     <main class="shell">
       <section class="intro">
-        <p class="eyebrow">Phase 3</p>
+        <p class="eyebrow">Phase 4</p>
         <h1>Three.js Globe Engine</h1>
         <p>
-          Online raster tiles, tile caching, procedural terrain, atmosphere, starfield,
-          unified click events and on-demand rendering are now wired into a single third-phase demo.
+          View-driven imagery LOD, real elevation terrain, atmospheric rendering, unified events,
+          inertia controls and lazy-loaded runtime are now wired into a single fourth-phase demo.
         </p>
       </section>
       <section class="workspace">
         <div class="viewport" id="globe-stage"></div>
         <aside class="panel">
           <h2>Interaction</h2>
-          <p>Drag to orbit, wheel to zoom, cross the poles freely, then inspect online tiles, terrain relief and unified click events with lng/lat coordinates.</p>
-          <div class="readout" id="pick-output"></div>
+          <p>Drag to orbit with inertia, wheel to zoom with inertia, cross the poles freely, then inspect adaptive tiles, real elevation and unified click events with lng/lat coordinates.</p>
+          <div class="readout" id="pick-output">Loading globe runtime...</div>
         </aside>
       </section>
     </main>
@@ -30,6 +29,7 @@ export function mountApp(container: HTMLElement): void {
     throw new Error("Missing demo mount points");
   }
 
+  const { runBasicGlobe } = await import("../examples/basic-globe");
   runBasicGlobe(stage, output);
 }
 
@@ -40,7 +40,7 @@ export function bootstrap(): void {
     throw new Error("Missing #app container");
   }
 
-  mountApp(app);
+  void mountApp(app);
 }
 
 if (typeof document !== "undefined" && document.querySelector("#app")) {

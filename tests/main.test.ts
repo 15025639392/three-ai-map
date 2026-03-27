@@ -9,10 +9,10 @@ vi.mock("../examples/basic-globe", () => ({
 import { mountApp } from "../src/main";
 
 describe("mountApp", () => {
-  it("renders the scaffold headline", () => {
+  it("renders the scaffold headline", async () => {
     const container = document.createElement("div");
 
-    mountApp(container);
+    await mountApp(container);
 
     expect(container.textContent).toContain("Three.js Globe Engine");
     expect(container.querySelector("main")).not.toBeNull();

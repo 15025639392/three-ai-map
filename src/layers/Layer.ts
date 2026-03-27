@@ -7,6 +7,7 @@ export interface LayerContext {
   camera: PerspectiveCamera;
   globe: GlobeMesh;
   radius: number;
+  rendererElement?: HTMLCanvasElement;
   requestRender?: () => void;
 }
 

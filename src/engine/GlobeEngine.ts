@@ -80,6 +80,7 @@ export class GlobeEngine {
       camera: this.sceneSystem.camera,
       globe: this.globe,
       radius,
+      rendererElement: this.rendererSystem.renderer.domElement,
       requestRender: this.requestRender
     });
 
