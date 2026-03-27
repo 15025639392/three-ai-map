@@ -6,7 +6,7 @@
 
 **Architecture:** 采用分层式内核结构，将渲染运行时、地理计算、地球宿主、图层系统与对外引擎装配分离。首期坚持窄接口和最小能力集，优先建立稳定数据流与生命周期，再扩展更多地图能力。
 
-**Tech Stack:** `TypeScript`, `three`, `Vite`, 原生浏览器 API
+**Tech Stack:** `TypeScript`, `three`, `Rspack`, 原生浏览器 API
 
 ---
 
@@ -15,7 +15,7 @@
 **Files:**
 - Create: `package.json`
 - Create: `tsconfig.json`
-- Create: `vite.config.ts`
+- Create: `rspack.config.ts`
 - Create: `index.html`
 - Create: `src/main.ts`
 - Create: `src/styles.css`
@@ -31,7 +31,7 @@ Expected: FAIL with missing `package.json` or missing script
 
 **Step 3: 写最小实现**
 
-- 初始化 `Vite + TypeScript` 工程
+- 初始化 `Rspack + TypeScript` 工程
 - 配置单页面入口与基本样式
 - 在 `src/main.ts` 中挂载最小引导代码
 
@@ -43,7 +43,7 @@ Expected: dev server starts and serves a blank scaffold page
 **Step 5: 提交**
 
 ```bash
-git add package.json tsconfig.json vite.config.ts index.html src/main.ts src/styles.css
+git add package.json tsconfig.json rspack.config.ts index.html src/main.ts src/styles.css
 git commit -m "feat: 初始化地球引擎工程骨架"
 ```
 
@@ -100,8 +100,8 @@ git commit -m "feat: 建立渲染运行时与相机控制"
 ```ts
 import { cartographicToCartesian } from "../../src/geo/projection";
 
-it("converts lon lat to globe position", () => {
-  const point = cartographicToCartesian({ lon: 0, lat: 0, height: 0 }, 1);
+it("converts lng lat to globe position", () => {
+  const point = cartographicToCartesian({ lng: 0, lat: 0, height: 0 }, 1);
   expect(point.x).toBeCloseTo(1);
   expect(point.y).toBeCloseTo(0);
   expect(point.z).toBeCloseTo(0);

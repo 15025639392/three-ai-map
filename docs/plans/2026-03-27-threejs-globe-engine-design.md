@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-基于 `three.js` 从 0 构建一个轻量地球引擎首期版本，在尽量少依赖外部库的前提下，提供可交互地球、经纬度坐标能力、基础影像承载、点标记与拾取能力，并为后续扩展到更多地图图层与数据能力预留清晰结构。
+基于 `three.js` 从 0 构建一个轻量地球引擎首期版本，在尽量少依赖外部库的前提下，提供可交互地球、经纬度坐标能力、基础影像承载、点标记与拾取能力，并为后续扩展到更多地图图层与数据能力预留清晰结构。工程构建层采用 `Rspack`。
 
 ## 2. 约束
 
@@ -110,7 +110,7 @@ const engine = new GlobeEngine({
 });
 
 engine.setView({
-  lon,
+  lng,
   lat,
   altitude,
   duration,
@@ -121,7 +121,7 @@ engine.removeLayer(layer.id);
 
 engine.addMarker({
   id,
-  lon,
+  lng,
   lat,
   altitude,
   style,

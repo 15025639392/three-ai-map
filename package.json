@@ -1,0 +1,24 @@
+{
+  "name": "three-map",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "rspack serve",
+    "build": "rspack build",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.176.0"
+  },
+  "devDependencies": {
+    "@rspack/cli": "^1.2.8",
+    "@rspack/core": "^1.2.8",
+    "@types/three": "^0.176.0",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}

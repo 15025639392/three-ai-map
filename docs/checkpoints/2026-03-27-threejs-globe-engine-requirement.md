@@ -4,7 +4,7 @@
 
 - 任务标题：使用 three.js 从 0 开发地球引擎需求规划
 - 技能类型：`需求`
-- 当前阶段：设计文档与实现计划已落盘
+- 当前阶段：第三阶段实现完成并已验证
 - 更新时间：2026-03-27
 - 负责人：Codex
 
@@ -21,10 +21,36 @@
   - [x] 用户确认数据流、API 与验收口径
   - [x] 设计文档已写入 `docs/plans/2026-03-27-threejs-globe-engine-design.md`
   - [x] 实现计划已写入 `docs/plans/2026-03-27-threejs-globe-engine.md`
+  - [x] 根据用户要求将工程构建层调整为 `Rspack`
+  - [x] 用户确认首期工程骨架采用最小 `Rspack` 配置
+  - [x] 用户确认首期相机采用围绕地心的 `orbit` 模式
+  - [x] 完成 `Rspack + TypeScript + three` 工程骨架
+  - [x] 完成 `core / geo / globe / layers / engine` 首期实现
+  - [x] 完成基础影像、点标记、拾取和 demo 页面
+  - [x] 完成 README 与首期验收文档
+  - [x] 完成全量验证：`npm run test:run`、`npm run typecheck`、`npm run build`
+  - [x] 修复拖拽手势方向与地球旋转方向相反的问题
+  - [x] 支持跨越极点的连续自由旋转
+  - [x] 修复滚轮缩放方向与预期相反的问题
+  - [x] 完成第二阶段多图层能力：显隐、顺序、折线层、多边形层
+  - [x] 完成统一事件系统：点击事件通过引擎派发 `pickResult`
+  - [x] 完成按需渲染：移除默认持续渲染循环，改为交互和状态变更触发
+  - [x] 更新第二阶段 demo、README 和验收文档
+  - [x] 第二阶段全量验证通过：`14` 个测试文件、`23` 个测试全部通过
+  - [x] 经纬字段命名统一为 `lng/lat`，移除 `lon`
+  - [x] 完成第三阶段在线瓦片能力：`TileCache`、`TileScheduler`、`TiledImageryLayer`
+  - [x] 完成第三阶段视觉升级：程序化地形、大气层、星空背景
+  - [x] 更新第三阶段 demo、README 和验收文档
+  - [x] 第三阶段全量验证通过：`19` 个测试文件、`29` 个测试全部通过
+  - [x] 回退“强制北朝上”的修复，改为仅修正倒置状态下的手势方向
+  - [x] 将拖拽控制重构为 arcball 轨迹球，修复“右上拖拽时地球向左上转”的问题
+  - [x] 最新全量验证通过：`19` 个测试文件、`30` 个测试全部通过
+  - [x] 修复拨动地球时因重复 `mousemove` 继续累积旋转导致的抖动
+  - [x] 最新全量验证通过：`19` 个测试文件、`31` 个测试全部通过
 - 进行中：
-  - [ ] 等待用户决定是否进入实现阶段
+  - [ ] 无
 - 下一步（唯一）：
-  - [ ] 由用户决定是继续执行实现计划，还是仅保留规划结果
+  - [ ] 若继续推进，规划第四阶段：真实高程、视锥/屏幕空间瓦片调度、LOD 与资源拆包
 
 ## 3) 关键结论与决策
 
@@ -46,6 +72,57 @@
 - 决策 6：球体宿主与业务图层分离，球体不视为普通 Layer。
   - 原因：球体承担坐标基底和渲染宿主职责，语义上不同于影像层和标记层。
   - 影响：`globe/` 将独立成模块，`LayerManager` 仅管理覆盖物与影像等业务层。
+- 决策 7：工程构建层采用 `Rspack`，不使用 `Vite`。
+  - 原因：这是用户新增的明确约束。
+  - 影响：初始化任务改为搭建 `Rspack + TypeScript + three` 的最小开发环境。
+- 决策 8：首期工程骨架仅保留最小 `Rspack` 配置。
+  - 原因：当前目标是尽快跑通 three.js 场景，不提前投入多环境和复杂构建逻辑。
+  - 影响：首期不会预配复杂别名、环境注入或额外构建插件。
+- 决策 9：首期相机仅采用围绕地心的 `orbit` 模式。
+  - 原因：它与地球引擎的经纬度定位模型天然匹配，且能显著降低姿态、边界和交互复杂度。
+  - 影响：首期不支持自由飞行视角，`setView` 和拾取逻辑可基于统一球心参考系实现。
+- 决策 10：首期影像采用程序化单张球面纹理，不引入瓦片调度。
+  - 原因：先验证完整引擎闭环，再把复杂度留给第二阶段。
+  - 影响：当前 demo 已有基础影像承载，但不包含在线瓦片请求和缓存。
+- 决策 11：拖拽方向应与地球运动方向保持一致。
+  - 原因：当前 `CameraController` 将 `mousemove` 增量映射成了反向经纬变化，交互体感错误。
+  - 影响：已将拖拽时的经纬更新改为正向累加，并补充回归测试。
+- 决策 12：相机控制改为连续轨道姿态驱动，允许跨越极点。
+  - 原因：单纯放开 `lat` clamp 仍会在极点附近出现姿态不连续，无法实现真实地球式自由旋转。
+  - 影响：相机位置和 `up` 向量现在都由连续旋转推导，跨极后允许自然翻转。
+- 决策 13：滚轮缩放采用“向下远离、向上靠近”的方向映射。
+  - 原因：此前 `deltaY > 0` 会把相机拉近，交互方向与预期相反。
+  - 影响：`CameraController` 的缩放逻辑已改为正向累加高度，并补了双向缩放回归测试。
+- 决策 14：第二阶段的覆盖物范围限定为静态折线与静态多边形。
+  - 原因：先建立通用覆盖物链路与拾取语义，再决定是否引入更复杂的地理裁剪和瓦片化。
+  - 影响：当前 `PolylineLayer` 和 `PolygonLayer` 以轻量几何实现为主，不涉及高级 GIS 算法。
+- 决策 15：事件系统由引擎统一派发，而不是示例层自行做射线逻辑。
+  - 原因：交互语义应该由引擎收敛，避免每个页面重复拼接拾取和事件分发。
+  - 影响：`GlobeEngine` 现已支持 `on/off("click")`，并透出统一 `pickResult`。
+- 决策 16：渲染策略改为按需渲染。
+  - 原因：第二阶段新增图层和事件后，持续渲染会放大无效帧成本。
+  - 影响：当前仅在视角变化、图层变化、尺寸变化和点击交互时触发渲染。
+- 决策 17：经度字段统一命名为 `lng`，不再使用 `lon`。
+  - 原因：对外 API 和内部类型需要统一口径，避免同一语义出现两套字段。
+  - 影响：类型、实现、测试、示例和文档已全部切换到 `lng/lat`。
+- 决策 18：第三阶段在线影像采用公开栅格瓦片源，并通过缓存与调度器控制请求。
+  - 原因：目标是先完成在线瓦片链路，而不是一次性做完整视锥裁剪和四叉树系统。
+  - 影响：当前 `TiledImageryLayer` 会以固定缩放级别拼装全球影像，并具备缓存、并发和失败降级能力。
+- 决策 19：地形先采用程序化高程，不引入真实 DEM。
+  - 原因：先建立地形几何和材质响应链路，再决定是否接真实高程数据。
+  - 影响：`GlobeMesh` 已支持程序化顶点位移，但当前高程不具备真实地理含义。
+- 决策 20：第三阶段视觉增强以大气层和星空为主，不引入完整后处理体系。
+  - 原因：当前目标是低依赖前提下显著提升画面层次。
+  - 影响：场景已默认挂载 `AtmosphereMesh` 和 `Starfield`，但尚未实现 bloom、HDR 或体积散射。
+- 决策 21：允许跨越极点后出现南朝上北朝下，问题不在“倒置”，而在拖拽必须始终按屏幕方向跟手。
+  - 原因：用户确认翻转是正常现象，真正需要修的是任意姿态下的拖拽方向一致性。
+  - 影响：不再尝试强制北朝上，也不再基于倒置状态做条件反转。
+- 决策 22：相机控制改为 arcball 轨迹球驱动，用前后两个屏幕点直接生成旋转。
+  - 原因：按 `lng/lat` 或拆分水平/垂直增量的近似做法，无法在极点和倒置状态下保持“手指往哪拨，地球就往哪转”。
+  - 影响：`CameraController` 现在按轨迹球向量计算四元数旋转，连续穿越极点且在正常/倒置姿态下都保持屏幕方向跟手。
+- 决策 23：arcball 轨迹球改为稳定的相机局部坐标，不再把同一屏幕点重复映射到变化中的世界向量。
+  - 原因：旧实现会让同一个鼠标坐标在连续帧中对应不同旋转输入，导致指针停住后仍继续微转，视觉上表现为抖动。
+  - 影响：`CameraController` 现在使用局部轨迹球向量并在右乘四元数后更新姿态，重复的同坐标 `mousemove` 不会继续转动地球。
 
 ## 4) 变更与证据
 
@@ -53,14 +130,51 @@
   - `docs/checkpoints/2026-03-27-threejs-globe-engine-requirement.md`
   - `docs/plans/2026-03-27-threejs-globe-engine-design.md`
   - `docs/plans/2026-03-27-threejs-globe-engine.md`
+  - `package.json`
+  - `rspack.config.ts`
+  - `src/`
+  - `examples/basic-globe.ts`
+  - `tests/`
+  - `docs/acceptance/threejs-globe-engine.md`
+  - `README.md`
 - 执行命令与结果：
   - `ls -la` -> 工作区为空目录
   - `git status --short --branch` -> 当前目录不是 git 仓库
   - `sed -n '1,220p' .../requirement-workflow/SKILL.md` -> 已读取需求流程
   - `sed -n '1,220p' .../brainstorming/SKILL.md` -> 已读取设计澄清流程
+  - `npm run test:run` -> `10` 个测试文件、`17` 个测试全部通过
+  - `npm run typecheck` -> 通过
+  - `npm run build` -> 构建通过，存在 bundle 体积告警
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> 手势方向回归测试通过
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> 跨极自由旋转回归测试通过
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> 缩放方向回归测试通过
+  - `npm run test:run` -> `14` 个测试文件、`23` 个测试全部通过
+  - `npm run typecheck` -> 第二阶段通过
+  - `npm run build` -> 第二阶段构建通过，仍有 bundle 体积告警
+  - `rg -n "\\blon\\b|\\.lon\\b|lon:" src tests examples docs README.md` -> 无残留命中
+  - `npm run test:run` -> `19` 个测试文件、`29` 个测试全部通过
+  - `npm run typecheck` -> 第三阶段通过
+  - `npm run build` -> 第三阶段构建通过，仍有 bundle 体积告警
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> 倒置状态手势方向回归测试通过
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> 任意方向轨道旋转回归测试通过
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> arcball 跟手方向与连续旋转回归测试通过
+  - `npm run test:run` -> `19` 个测试文件、`30` 个测试全部通过
+  - `npm run typecheck` -> 通过
+  - `npm run build` -> 构建通过，仍有 bundle 体积告警
+  - `headless Chrome drag (470,540) -> (590,460)` -> 前后截图中黄色标记点与折线均向右上偏移，符合跟手预期
+  - `npm run test:run -- tests/core/CameraController.test.ts` -> 新增“同坐标重复 move 不继续旋转”回归测试通过
+  - `npm run test:run` -> `19` 个测试文件、`31` 个测试全部通过
+  - `npm run typecheck` -> 通过
+  - `npm run build` -> 构建通过，仍有 bundle 体积告警
+  - `headless Chrome duplicate mousemove at (590,460)` -> 两张画布截图 `sha256` 一致，无继续转动：`0e4025ef6cad224dd5d855f65552664793c306b25b6077ff1b2792d94cb5b961`
 - 关键日志/截图/报告路径：
   - `docs/plans/2026-03-27-threejs-globe-engine-design.md`
   - `docs/plans/2026-03-27-threejs-globe-engine.md`
+  - `docs/acceptance/threejs-globe-engine.md`
+  - `/tmp/three-map-before.png`
+  - `/tmp/three-map-after.png`
+  - `/tmp/three-map-jitter-first.png`
+  - `/tmp/three-map-jitter-second.png`
 
 ## 5) 风险与阻塞
 
@@ -68,8 +182,11 @@
   - `地球引擎` 范围过大，若不限定首期范围，规划会失真
   - 若首期同时包含地形、影像、矢量、相机控制、标注和交互，复杂度会快速上升
   - 若对外 API 过早追求完备，会把首期拖进抽象设计
+  - 当前 `main.js` 约 `488 KiB`，`Rspack` 已提示体积告警，第二阶段应考虑拆包或按需加载
+  - 第二阶段结束后 `main.js` 约 `495 KiB`，若进入在线瓦片和地形，必须开始处理拆包与资源加载策略
+  - 第三阶段结束后 `main.js` 约 `502 KiB`，若继续扩到真实高程和更复杂瓦片系统，必须先处理代码拆包与资源生命周期
 - 阻塞：
-  - 当前无技术阻塞，等待是否进入实现
+  - 当前无阻塞
 - 需要谁确认：
   - `用户`
 

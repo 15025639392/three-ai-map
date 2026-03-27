@@ -1,0 +1,111 @@
+:root {
+  color-scheme: dark;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(68, 127, 255, 0.2), transparent 36%),
+    radial-gradient(circle at bottom left, rgba(30, 160, 120, 0.12), transparent 28%),
+    linear-gradient(180deg, #08101d, #03060d 70%);
+  color: #e7eefb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+}
+
+.shell {
+  display: grid;
+  gap: 24px;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.intro {
+  width: min(760px, 100%);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  min-height: 640px;
+}
+
+.viewport,
+.panel {
+  border: 1px solid rgba(231, 238, 251, 0.15);
+  border-radius: 24px;
+  background: rgba(7, 13, 24, 0.72);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 520px;
+}
+
+.viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.panel {
+  padding: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #8daaf5;
+  font-size: 12px;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+p {
+  margin: 0;
+  color: rgba(231, 238, 251, 0.82);
+  line-height: 1.6;
+}
+
+.readout {
+  margin-top: 20px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(17, 30, 54, 0.9);
+  border: 1px solid rgba(141, 170, 245, 0.24);
+  color: #dfe8ff;
+  font-family: "IBM Plex Mono", monospace;
+  min-height: 58px;
+}
+
+@media (max-width: 960px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .viewport {
+    min-height: 420px;
+  }
+}
