@@ -237,3 +237,22 @@
   - `继续这个任务，先读取 /Users/ldy/Desktop/map/three-map/docs/checkpoints/2026-03-27-threejs-globe-engine-requirement.md，按“下一步（唯一）”执行，并在每个阶段结束后更新断点文件。`
 - 若需要子agent：
   - `基于 /Users/ldy/Desktop/map/three-map/docs/checkpoints/2026-03-27-threejs-globe-engine-requirement.md 拆分并并行执行未完成项，返回统一格式结果。`
+
+## 7) 2026-03-28 Bugfix 记录（高缩放底图）
+
+- 背景：
+  - 用户将 `baseImagery.maxZoom` 调整到 `8` 后，已无黑屏，但高缩放仍明显卡顿。
+- 本轮已做：
+  - `TiledImageryLayer` 增加安全 `effectiveMaxZoom`，避免 atlas 画布超限导致黑屏。
+  - 默认 `maxCanvasDimension` 下调到 `4096`，降低高缩放重投影成本。
+  - 重投影循环改为“当前轮完成后再补一轮”，避免加载中反复从第 `0` 行重启。
+  - 去掉每轮全量 `clearRect`，减少主线程额外开销。
+  - 新增/更新回归测试：高 `maxZoom` 下 atlas 限幅与缩放上限生效。
+- 当前结论：
+  - 黑屏问题已解决。
+  - 高缩放卡顿仍存在，瓶颈已进入“重投影裁剪策略”阶段，不再是简单参数问题。
+- 下一步（唯一）：
+  - 实现按脏纬度行裁剪的增量重投影（dirty-row projection），仅重算受新增瓦片影响的行区间。
+- 本轮验证：
+  - `npm run test:run -- tests/layers/TiledImageryLayer.test.ts` -> 通过（8/8）
+  - `npm run typecheck` -> 通过

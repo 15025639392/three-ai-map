@@ -520,4 +520,53 @@ describe("TiledImageryLayer", () => {
 
     getContext.mockRestore();
   });
+
+  it("caps atlas canvas resolution by default for high maxZoom configs", async () => {
+    const requestedZooms: number[] = [];
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockImplementation(() => {
+        const gradient = {
+          addColorStop: vi.fn()
+        };
+
+        return {
+          createLinearGradient: vi.fn(() => gradient),
+          drawImage: vi.fn(),
+          clearRect: vi.fn(),
+          fillRect: vi.fn(),
+          fillStyle: ""
+        } as unknown as CanvasRenderingContext2D;
+      });
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = new PerspectiveCamera(45, 16 / 9, 0.1, 1000);
+    camera.position.set(1.02, 0, 0);
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+    const layer = new TiledImageryLayer("tiles", {
+      minZoom: 1,
+      maxZoom: 8,
+      tileSize: 128,
+      cacheSize: 8,
+      loadTile: async (coordinate) => {
+        requestedZooms.push(coordinate.z);
+        const canvas = document.createElement("canvas");
+        canvas.width = 128;
+        canvas.height = 128;
+        return canvas;
+      }
+    });
+
+    layer.onAdd({ scene, camera, globe, radius: 1, rendererElement });
+    await layer.ready();
+
+    expect((layer as unknown as { mercatorCanvas: HTMLCanvasElement }).mercatorCanvas.width).toBe(4096);
+    expect((layer as unknown as { mercatorCanvas: HTMLCanvasElement }).mercatorCanvas.height).toBe(4096);
+    expect(Math.max(...requestedZooms)).toBeLessThanOrEqual(5);
+
+    getContext.mockRestore();
+  });
 });

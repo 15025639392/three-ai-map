@@ -14,11 +14,49 @@ interface TiledImageryLayerOptions {
   minZoom?: number;
   maxZoom?: number;
   tileSize?: number;
+  maxCanvasDimension?: number;
   cacheSize?: number;
   concurrency?: number;
   projectionRowsPerFrame?: number;
   templateUrl?: string;
   loadTile?: (coordinate: TileCoordinate) => Promise<TileSource>;
+}
+
+const DEFAULT_MAX_CANVAS_DIMENSION = 4096;
+const PROJECTION_PIXELS_PER_FRAME = 1024 * 1024;
+const MIN_PROJECTION_ROWS_PER_FRAME = 32;
+const MAX_PROJECTION_ROWS_PER_FRAME = 256;
+
+function resolveMaxCanvasDimension(): number {
+  if (typeof document === "undefined") {
+    return DEFAULT_MAX_CANVAS_DIMENSION;
+  }
+
+  const probe = document.createElement("canvas");
+  const webglCandidate = probe.getContext("webgl") ?? probe.getContext("experimental-webgl");
+  const webglContext =
+    webglCandidate && typeof (webglCandidate as { getParameter?: unknown }).getParameter === "function"
+      ? (webglCandidate as WebGLRenderingContext)
+      : null;
+
+  if (!webglContext) {
+    return DEFAULT_MAX_CANVAS_DIMENSION;
+  }
+
+  const maxTextureSize = Number(webglContext.getParameter(webglContext.MAX_TEXTURE_SIZE));
+
+  if (!Number.isFinite(maxTextureSize) || maxTextureSize <= 0) {
+    return DEFAULT_MAX_CANVAS_DIMENSION;
+  }
+
+  return Math.floor(maxTextureSize);
+}
+
+function computeEffectiveMaxZoom(maxZoom: number, tileSize: number, maxCanvasDimension: number): number {
+  const safeCanvasDimension = Math.max(tileSize, Math.floor(maxCanvasDimension));
+  const maxWorldTileCount = Math.max(1, Math.floor(safeCanvasDimension / tileSize));
+  const safeZoom = Math.max(0, Math.floor(Math.log2(maxWorldTileCount)));
+  return Math.min(maxZoom, safeZoom);
 }
 
 function mercatorYFromLatitude(latitude: number, height: number): number {
@@ -68,6 +106,7 @@ async function defaultTileLoader(
 export class TiledImageryLayer extends Layer {
   private readonly minZoom: number;
   private readonly maxZoom: number;
+  private readonly effectiveMaxZoom: number;
   private readonly tileSize: number;
   private readonly projectionRowsPerFrame: number;
   private readonly templateUrl: string;
@@ -90,7 +129,12 @@ export class TiledImageryLayer extends Layer {
     this.minZoom = options.minZoom ?? 1;
     this.maxZoom = options.maxZoom ?? 5;
     this.tileSize = options.tileSize ?? 128;
-    this.projectionRowsPerFrame = options.projectionRowsPerFrame ?? 256;
+    const maxCanvasDimension = options.maxCanvasDimension ?? resolveMaxCanvasDimension();
+    this.effectiveMaxZoom = computeEffectiveMaxZoom(
+      this.maxZoom,
+      this.tileSize,
+      maxCanvasDimension
+    );
     this.templateUrl = options.templateUrl ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
     this.cache = new TileCache<TileSource>(options.cacheSize ?? 64);
     const tileLoader =
@@ -100,13 +144,21 @@ export class TiledImageryLayer extends Layer {
       loadTile: tileLoader
     });
 
-    const maxWorldTileCount = 2 ** this.maxZoom;
+    const maxWorldTileCount = 2 ** this.effectiveMaxZoom;
     this.mercatorCanvas = document.createElement("canvas");
     this.mercatorCanvas.width = maxWorldTileCount * this.tileSize;
     this.mercatorCanvas.height = maxWorldTileCount * this.tileSize;
     this.outputCanvas = document.createElement("canvas");
     this.outputCanvas.width = this.mercatorCanvas.width;
     this.outputCanvas.height = this.mercatorCanvas.width / 2;
+    this.projectionRowsPerFrame = options.projectionRowsPerFrame ??
+      Math.max(
+        MIN_PROJECTION_ROWS_PER_FRAME,
+        Math.min(
+          MAX_PROJECTION_ROWS_PER_FRAME,
+          Math.floor(PROJECTION_PIXELS_PER_FRAME / this.outputCanvas.width)
+        )
+      );
     this.paintPlaceholder();
     this.texture = new CanvasTexture(this.outputCanvas);
   }
@@ -154,7 +206,7 @@ export class TiledImageryLayer extends Layer {
       radius: context.radius,
       tileSize: this.tileSize,
       minZoom: this.minZoom,
-      maxZoom: this.maxZoom
+      maxZoom: this.effectiveMaxZoom
     });
     const visibleTiles = computeVisibleTileCoordinates({
       camera: context.camera,
@@ -204,7 +256,7 @@ export class TiledImageryLayer extends Layer {
       throw new Error("Mercator canvas context is not available");
     }
 
-    const scale = 2 ** (this.maxZoom - coordinate.z);
+    const scale = 2 ** (this.effectiveMaxZoom - coordinate.z);
     const targetSize = this.tileSize * scale;
 
     context.drawImage(
@@ -243,6 +295,9 @@ export class TiledImageryLayer extends Layer {
 
   private scheduleProjection(): void {
     this.projectionDirty = true;
+    if (this.projectionRow >= this.outputCanvas.height) {
+      this.projectionRow = 0;
+    }
     this.requestProjectionFrame();
   }
 
@@ -259,10 +314,9 @@ export class TiledImageryLayer extends Layer {
         throw new Error("Output canvas context is not available");
       }
 
-      if (this.projectionDirty) {
+      if (this.projectionRow === 0) {
+        // Start a new projection pass using the latest available mercator data.
         this.projectionDirty = false;
-        this.projectionRow = 0;
-        outputContext.clearRect(0, 0, this.outputCanvas.width, this.outputCanvas.height);
       }
 
       const endRow = Math.min(
@@ -272,7 +326,15 @@ export class TiledImageryLayer extends Layer {
       this.projectMercatorToEquirectangular(this.projectionRow, endRow);
       this.projectionRow = endRow;
 
-      if (this.projectionDirty || this.projectionRow < this.outputCanvas.height) {
+      if (this.projectionRow < this.outputCanvas.height) {
+        this.requestProjectionFrame();
+        return;
+      }
+
+      // New tiles may arrive during an ongoing pass. Complete current pass first,
+      // then run exactly one follow-up pass instead of repeatedly restarting from row 0.
+      if (this.projectionDirty) {
+        this.projectionRow = 0;
         this.requestProjectionFrame();
         return;
       }
