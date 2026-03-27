@@ -134,13 +134,14 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   });
   const surfaceTiles = new SurfaceTileLayer("surface-tiles", {
     minZoom: 3,
-    maxZoom: 8,
+    maxZoom: 10,
     tileSize: 256,
     meshSegments: 16,
     cacheSize: 96,
     concurrency: 6,
     elevationExaggeration: 1,
-    zoomExaggerationBoost: 6
+    zoomExaggerationBoost: 6,
+    skirtDepthMeters: 900
   });
   engine.addLayer(baseImagery);
   engine.addLayer(baseElevation);

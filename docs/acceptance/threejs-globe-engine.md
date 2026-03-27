@@ -1,4 +1,4 @@
-# Three.js 地球引擎第五阶段验收
+# Three.js 地球引擎第六阶段验收
 
 ## 启动
 
@@ -19,6 +19,9 @@ npm run dev
 - 当前视角附近会加载统一的球面 surface tile mesh，而不是只把所有在线瓦片烘到一张整球纹理
 - 深入缩放时，surface tile 会提供比第四阶段更细的局部影像和地形细节
 - surface tile 不可见或离开视野后会从场景中回收，而不是一直常驻整球
+- surface tile 采用混合 LOD 叶子集：中心区域可细化一级，外围保持父级瓦片，不要求全屏同一 zoom
+- surface tile 高程解码优先走 worker，worker 不可用时自动回退主线程解码
+- 相邻或跨 LOD 的 surface tile 边缘无明显缝隙开裂（通过 skirt 抑制）
 - 场景包含大气层光晕与星空背景
 - 页面上至少存在 3 个可见点标记
 - 页面上存在至少 1 条折线覆盖物

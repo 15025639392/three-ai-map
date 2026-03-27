@@ -133,7 +133,9 @@ describe("runBasicGlobe", () => {
     expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
       "surface-tiles",
       expect.objectContaining({
-        zoomExaggerationBoost: 6
+        maxZoom: 10,
+        zoomExaggerationBoost: 6,
+        skirtDepthMeters: 900
       })
     );
     expect(TiledImageryLayerMock).toHaveBeenCalledTimes(1);

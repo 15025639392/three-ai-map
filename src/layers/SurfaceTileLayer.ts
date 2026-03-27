@@ -10,6 +10,7 @@ import {
 import { WGS84_RADIUS } from "../geo/ellipsoid";
 import { cartographicToCartesian } from "../geo/projection";
 import { TileCache } from "../tiles/TileCache";
+import { TerrariumDecoder } from "../tiles/TerrariumDecoder";
 import { TileScheduler } from "../tiles/TileScheduler";
 import {
   selectSurfaceTileCoordinates,
@@ -48,6 +49,7 @@ interface SurfaceTileLayerOptions {
   concurrency?: number;
   elevationExaggeration?: number;
   zoomExaggerationBoost?: number;
+  skirtDepthMeters?: number;
   imageryTemplateUrl?: string;
   elevationTemplateUrl?: string;
   selectTiles?: (options: SurfaceTileSelectionOptions) => SurfaceTileSelection;
@@ -105,7 +107,8 @@ async function defaultTileLoader(
 
 async function defaultElevationLoader(
   coordinate: TileCoordinate,
-  templateUrl: string
+  templateUrl: string,
+  decoder: TerrariumDecoder
 ): Promise<ElevationTileData> {
   const source = await defaultTileLoader(coordinate, templateUrl);
   const canvas = document.createElement("canvas");
@@ -119,16 +122,7 @@ async function defaultElevationLoader(
 
   context.drawImage(source, 0, 0, canvas.width, canvas.height);
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-  const heights = new Float32Array(canvas.width * canvas.height);
-
-  for (let index = 0; index < heights.length; index += 1) {
-    const offset = index * 4;
-    heights[index] =
-      imageData.data[offset] * 256 +
-      imageData.data[offset + 1] +
-      imageData.data[offset + 2] / 256 -
-      32768;
-  }
+  const heights = await decoder.decode(canvas.width, canvas.height, imageData.data);
 
   return {
     width: canvas.width,
@@ -156,12 +150,53 @@ function sampleElevation(tile: ElevationTileData, u: number, v: number): number 
   return top * (1 - ty) + bottom * ty;
 }
 
+function appendSkirt(
+  positions: number[],
+  uvs: number[],
+  indices: number[],
+  edgeIndices: number[],
+  skirtDepth: number
+): void {
+  if (edgeIndices.length < 2 || skirtDepth <= 0) {
+    return;
+  }
+
+  const skirtStart = positions.length / 3;
+
+  for (const edgeIndex of edgeIndices) {
+    const offset = edgeIndex * 3;
+    const x = positions[offset];
+    const y = positions[offset + 1];
+    const z = positions[offset + 2];
+    const length = Math.sqrt(x * x + y * y + z * z) || 1;
+    const nx = x / length;
+    const ny = y / length;
+    const nz = z / length;
+    const skirtX = x - nx * skirtDepth;
+    const skirtY = y - ny * skirtDepth;
+    const skirtZ = z - nz * skirtDepth;
+
+    positions.push(skirtX, skirtY, skirtZ);
+    const uvOffset = edgeIndex * 2;
+    uvs.push(uvs[uvOffset], uvs[uvOffset + 1]);
+  }
+
+  for (let index = 0; index < edgeIndices.length - 1; index += 1) {
+    const topLeft = edgeIndices[index];
+    const topRight = edgeIndices[index + 1];
+    const bottomLeft = skirtStart + index;
+    const bottomRight = skirtStart + index + 1;
+    indices.push(topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight);
+  }
+}
+
 function buildSurfaceTileGeometry(
   coordinate: TileCoordinate,
   radius: number,
   meshSegments: number,
   elevationTile: ElevationTileData | null,
-  elevationExaggeration: number
+  elevationExaggeration: number,
+  skirtDepthMeters: number
 ): BufferGeometry {
   const { west, east, south, north } = getSurfaceTileBounds(coordinate);
   const positions: number[] = [];
@@ -203,6 +238,19 @@ function buildSurfaceTileGeometry(
     }
   }
 
+  if (skirtDepthMeters > 0) {
+    const skirtDepth = (skirtDepthMeters / WGS84_RADIUS) * radius * elevationExaggeration;
+    const topEdge = Array.from({ length: rowSize }, (_, index) => index);
+    const bottomEdge = Array.from({ length: rowSize }, (_, index) => meshSegments * rowSize + index);
+    const leftEdge = Array.from({ length: rowSize }, (_, index) => index * rowSize);
+    const rightEdge = Array.from({ length: rowSize }, (_, index) => index * rowSize + meshSegments);
+
+    appendSkirt(positions, uvs, indices, topEdge, skirtDepth);
+    appendSkirt(positions, uvs, indices, bottomEdge, skirtDepth);
+    appendSkirt(positions, uvs, indices, leftEdge, skirtDepth);
+    appendSkirt(positions, uvs, indices, rightEdge, skirtDepth);
+  }
+
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
@@ -217,6 +265,7 @@ export class SurfaceTileLayer extends Layer {
   private readonly maxZoom: number;
   private readonly tileSize: number;
   private readonly meshSegments: number;
+  private readonly skirtDepthMeters: number;
   private readonly elevationExaggeration: number;
   private readonly zoomExaggerationBoost: number;
   private readonly selectTiles;
@@ -224,6 +273,7 @@ export class SurfaceTileLayer extends Layer {
   private readonly elevationCache: TileCache<ElevationTileData>;
   private readonly imageryScheduler: TileScheduler<TileSource, TileCoordinate>;
   private readonly elevationScheduler: TileScheduler<ElevationTileData, TileCoordinate>;
+  private readonly terrariumDecoder = new TerrariumDecoder();
   private readonly group = new Group();
   private readonly activeTiles = new Map<string, SurfaceTileEntry>();
   private context: LayerContext | null = null;
@@ -237,6 +287,7 @@ export class SurfaceTileLayer extends Layer {
     this.maxZoom = options.maxZoom ?? 8;
     this.tileSize = options.tileSize ?? 256;
     this.meshSegments = options.meshSegments ?? 16;
+    this.skirtDepthMeters = options.skirtDepthMeters ?? 900;
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
     this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
     this.selectTiles = options.selectTiles ?? selectSurfaceTileCoordinates;
@@ -257,7 +308,8 @@ export class SurfaceTileLayer extends Layer {
       concurrency: options.concurrency ?? 6,
       loadTile:
         options.loadElevationTile ??
-        ((coordinate: TileCoordinate) => defaultElevationLoader(coordinate, elevationTemplateUrl))
+        ((coordinate: TileCoordinate) =>
+          defaultElevationLoader(coordinate, elevationTemplateUrl, this.terrariumDecoder))
     });
     this.group.name = id;
   }
@@ -293,6 +345,7 @@ export class SurfaceTileLayer extends Layer {
     this.elevationCache.clear();
     this.imageryScheduler.clear();
     this.elevationScheduler.clear();
+    this.terrariumDecoder.dispose();
   }
 
   private syncTiles(context: LayerContext): void {
@@ -351,13 +404,11 @@ export class SurfaceTileLayer extends Layer {
     }
 
     this.readyPromise = Promise.allSettled(
-      selection.coordinates.map((coordinate) =>
-        this.ensureTile(coordinate, context.radius, selection.zoom)
-      )
+      selection.coordinates.map((coordinate) => this.ensureTile(coordinate, context.radius))
     ).then(() => undefined);
   }
 
-  private ensureTile(coordinate: TileCoordinate, radius: number, selectionZoom: number): Promise<void> {
+  private ensureTile(coordinate: TileCoordinate, radius: number): Promise<void> {
     const key = `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
     const existing = this.activeTiles.get(key);
 
@@ -370,7 +421,7 @@ export class SurfaceTileLayer extends Layer {
       promise: this.loadTileMesh(
         coordinate,
         radius,
-        this.computeElevationExaggeration(selectionZoom),
+        this.computeElevationExaggeration(coordinate.z),
         key,
         () => this.activeTiles.get(key) === entry
       ).then((mesh) => {
@@ -442,7 +493,8 @@ export class SurfaceTileLayer extends Layer {
       radius,
       this.meshSegments,
       elevation,
-      elevationExaggeration
+      elevationExaggeration,
+      this.skirtDepthMeters
     );
     const texture = createTexture(imagery);
     const material = new MeshStandardMaterial({

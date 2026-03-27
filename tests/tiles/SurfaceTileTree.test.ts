@@ -72,7 +72,39 @@ describe("SurfaceTileTree", () => {
 
     expect(selection.coordinates.length).toBeGreaterThan(0);
     expect(selection.coordinates.length).toBeLessThan(64);
-    expect(selection.coordinates.every((coordinate) => coordinate.z === selection.zoom)).toBe(true);
+    expect(selection.coordinates.every((coordinate) => coordinate.z >= selection.zoom)).toBe(true);
+    expect(selection.coordinates.every((coordinate) => coordinate.z <= selection.zoom + 1)).toBe(true);
+  });
+
+  it("builds a mixed lod leaf set without keeping parent tiles under refined children", () => {
+    const selection = selectSurfaceTileCoordinates({
+      camera: createOrbitCamera(110, 28, 0.25, 1),
+      viewportWidth: 1280,
+      viewportHeight: 720,
+      radius: 1,
+      tileSize: 256,
+      minZoom: 3,
+      maxZoom: 9
+    });
+    const keySet = new Set(
+      selection.coordinates.map((coordinate) => `${coordinate.z}/${coordinate.x}/${coordinate.y}`)
+    );
+    const hasDetailedTiles = selection.coordinates.some((coordinate) => coordinate.z > selection.zoom);
+
+    expect(hasDetailedTiles).toBe(true);
+
+    for (const coordinate of selection.coordinates) {
+      if (coordinate.z <= selection.zoom) {
+        continue;
+      }
+
+      const parent = {
+        z: coordinate.z - 1,
+        x: Math.floor(coordinate.x / 2),
+        y: Math.floor(coordinate.y / 2)
+      };
+      expect(keySet.has(`${parent.z}/${parent.x}/${parent.y}`)).toBe(false);
+    }
   });
 
   it("diagnoses near-zoom tile counts for the default demo view", () => {

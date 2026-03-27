@@ -294,6 +294,46 @@ describe("SurfaceTileLayer", () => {
     expect(radius).toBeCloseTo(1, 6);
   });
 
+  it("adds skirt vertices to hide seams between neighboring or mixed lod tiles", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 1,
+      skirtDepthMeters: 800,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      }),
+      loadImageryTile: async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(100)
+    });
+
+    layer.onAdd({
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement
+    });
+    await layer.ready();
+
+    const group = scene.getObjectByName("surface-tiles");
+    const mesh = group?.children[0] as Mesh | undefined;
+    const positionCount = mesh?.geometry.getAttribute("position").count ?? 0;
+    const expectedGridVertexCount = (1 + 1) * (1 + 1);
+
+    expect(positionCount).toBeGreaterThan(expectedGridVertexCount);
+  });
+
   it("increases terrain relief at higher zoom when zoomExaggerationBoost is enabled", async () => {
     const rendererElement = createRendererElement(1280, 720);
     const camera = createCamera(2.2);
