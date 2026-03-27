@@ -220,6 +220,22 @@ describe("CameraController", () => {
     expect(controller.getView().altitude).toBeCloseTo(0.2);
   });
 
+  it("allows default ultra-close altitude for high zoom scale and updates near plane accordingly", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+
+    controller.setView({ lng: 0, lat: 0, altitude: 0.000000001 });
+    controller.update();
+
+    expect(controller.getView().altitude).toBeCloseTo(0.000001, 9);
+    expect(camera.near).toBeLessThan(0.000001);
+  });
+
   it("keeps zooming briefly after wheel input based on zoom velocity", () => {
     const animationFrame = installAnimationFrameMock();
     const element = createViewportElement();

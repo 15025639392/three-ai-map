@@ -36,6 +36,9 @@ const ROTATION_DAMPING = 0.006;
 const ZOOM_DAMPING = 0.01;
 const MIN_ROTATION_SPEED = 0.00001;
 const MIN_ZOOM_SPEED = 0.00001;
+const MIN_NEAR_PLANE = 0.0000002;
+const MAX_NEAR_PLANE = 0.1;
+const NEAR_PLANE_ALTITUDE_FACTOR = 0.5;
 
 export class CameraController {
   private readonly camera: PerspectiveCamera;
@@ -44,7 +47,7 @@ export class CameraController {
   private readonly minAltitude: number;
   private readonly maxAltitude: number;
   private readonly onChange?: () => void;
-  private readonly zoomSpeed = 0.001;
+  private readonly zoomSpeed = 0.0005;
   private isDragging = false;
   private altitude: number;
   private readonly orbitQuaternion = new Quaternion();
@@ -62,7 +65,7 @@ export class CameraController {
     camera,
     element,
     globeRadius,
-    minAltitude = globeRadius * 0.2,
+    minAltitude = globeRadius * 0.000001,
     maxAltitude = globeRadius * 20,
     onChange
   }: CameraControllerOptions) {
@@ -123,6 +126,8 @@ export class CameraController {
   }
 
   update(): void {
+    this.updateCameraNearPlane();
+
     const orbitDistance = this.globeRadius + this.altitude;
     const cartesian = BASE_POSITION.clone()
       .multiplyScalar(orbitDistance)
@@ -144,6 +149,20 @@ export class CameraController {
 
   private clampAltitude(altitude: number): number {
     return Math.max(this.minAltitude, Math.min(this.maxAltitude, altitude));
+  }
+
+  private updateCameraNearPlane(): void {
+    const nextNear = Math.max(
+      MIN_NEAR_PLANE,
+      Math.min(MAX_NEAR_PLANE, this.altitude * NEAR_PLANE_ALTITUDE_FACTOR)
+    );
+
+    if (Math.abs(this.camera.near - nextNear) <= Number.EPSILON) {
+      return;
+    }
+
+    this.camera.near = nextNear;
+    this.camera.updateProjectionMatrix();
   }
 
   private handlePointerDown = (event: MouseEvent): void => {
@@ -212,7 +231,8 @@ export class CameraController {
   };
 
   private handleWheel = (event: WheelEvent): void => {
-    const deltaAltitude = event.deltaY * this.zoomSpeed;
+    const zoomScale = Math.max(this.altitude, this.globeRadius * 0.00001);
+    const deltaAltitude = event.deltaY * this.zoomSpeed * zoomScale;
     const nextAltitude = this.clampAltitude(this.altitude + deltaAltitude);
     const altitudeDelta = nextAltitude - this.altitude;
     this.altitude = nextAltitude;

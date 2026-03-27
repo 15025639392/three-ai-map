@@ -134,7 +134,7 @@ describe("runBasicGlobe", () => {
       "surface-tiles",
       expect.objectContaining({
         tileSize: 128,
-        maxZoom: 10,
+        maxZoom: 11,
         zoomExaggerationBoost: 6,
         textureUvInsetPixels: 1,
         skirtDepthMeters: 1400
@@ -142,6 +142,6 @@ describe("runBasicGlobe", () => {
     );
     expect(TiledImageryLayerMock).toHaveBeenCalledTimes(1);
     expect(ElevationLayerMock).toHaveBeenCalledTimes(1);
-    expect(addLayerMock).toHaveBeenCalledTimes(2);
+    expect(addLayerMock).toHaveBeenCalledTimes(3);
   });
 });

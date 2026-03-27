@@ -205,4 +205,21 @@ describe("SurfaceTileTree", () => {
     expect(zoomLevels).toEqual([4]);
     expect(selection.coordinates.length).toBeGreaterThan(16);
   });
+
+  it("keeps a single detailed lod at the mexico seam repro view", () => {
+    const selection = selectSurfaceTileCoordinates({
+      camera: createOrbitCamera(-103.570152, 24.712753, 0.246603, 1),
+      viewportWidth: 1280,
+      viewportHeight: 720,
+      radius: 1,
+      tileSize: 256,
+      minZoom: 3,
+      maxZoom: 10
+    });
+    const zoomLevels = [...new Set(selection.coordinates.map((coordinate) => coordinate.z))];
+
+    expect(selection.zoom).toBe(6);
+    expect(zoomLevels).toEqual([7]);
+    expect(selection.coordinates.length).toBeGreaterThan(45);
+  });
 });

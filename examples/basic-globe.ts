@@ -120,7 +120,7 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   });
   const baseImagery = new TiledImageryLayer("imagery-tiles", {
     minZoom: 1,
-    maxZoom: 5,
+    maxZoom: 6,
     tileSize: 128,
     cacheSize: 48,
     concurrency: 4
@@ -134,7 +134,7 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   });
   const surfaceTiles = new SurfaceTileLayer("surface-tiles", {
     minZoom: 3,
-    maxZoom: 10,
+    maxZoom: 11,
     tileSize: 128,
     meshSegments: 16,
     cacheSize: 96,
@@ -145,7 +145,7 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     skirtDepthMeters: 1400
   });
   engine.addLayer(baseImagery);
-  // engine.addLayer(baseElevation);
+  engine.addLayer(baseElevation);
   engine.addLayer(surfaceTiles);
   baseImagery.ready().catch(() => {
     engine.removeLayer("imagery-tiles");

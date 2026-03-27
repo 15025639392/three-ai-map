@@ -1,5 +1,4 @@
 import { PerspectiveCamera } from "three";
-import { cartesianToCartographic } from "../geo/projection";
 import {
   TileCoordinate,
   computeTargetZoom,
@@ -33,18 +32,6 @@ function mercatorToLatitude(normalizedY: number): number {
   return (Math.atan(Math.sinh(mercator)) * 180) / Math.PI;
 }
 
-function lngToTileX(lng: number, zoom: number): number {
-  return ((lng + 180) / 360) * 2 ** zoom;
-}
-
-function latToTileY(lat: number, zoom: number): number {
-  const clamped = Math.max(-85.05112878, Math.min(85.05112878, lat));
-  const radians = (clamped * Math.PI) / 180;
-  return (
-    (0.5 - Math.log((1 + Math.sin(radians)) / (1 - Math.sin(radians))) / (4 * Math.PI)) * 2 ** zoom
-  );
-}
-
 function coordinateKey(coordinate: TileCoordinate): string {
   return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
 }
@@ -52,20 +39,6 @@ function coordinateKey(coordinate: TileCoordinate): string {
 function normalizeTileX(x: number, zoom: number): number {
   const worldTileCount = 2 ** zoom;
   return ((x % worldTileCount) + worldTileCount) % worldTileCount;
-}
-
-function coordinateParentAtZoom(coordinate: TileCoordinate, zoom: number): TileCoordinate {
-  if (coordinate.z <= zoom) {
-    return coordinate;
-  }
-
-  const delta = coordinate.z - zoom;
-  const scale = 2 ** delta;
-  return {
-    z: zoom,
-    x: normalizeTileX(Math.floor(coordinate.x / scale), zoom),
-    y: Math.floor(coordinate.y / scale)
-  };
 }
 
 function expandCoordinates(coordinates: TileCoordinate[], padding: number): TileCoordinate[] {
@@ -192,51 +165,12 @@ export function selectSurfaceTileCoordinates({
     };
   }
 
-  // Prefer a single detailed LOD at seam-prone zoom ranges to avoid visible parent-child boundaries.
-  const useUniformDetailLod = zoom >= maxZoom - 1 || zoom <= minZoom + 1;
-
-  if (useUniformDetailLod) {
-    const paddedDetailCoordinates = zoom <= minZoom + 1
-      ? uniqueSortedCoordinates(expandCoordinates(detailCoordinates, 1))
-      : detailCoordinates;
-    return {
-      zoom,
-      coordinates: paddedDetailCoordinates
-    };
-  }
-
-  const centerDirection = camera.position.clone().normalize().multiplyScalar(radius);
-  const centerCartographic = cartesianToCartographic(
-    {
-      x: centerDirection.x,
-      y: centerDirection.y,
-      z: centerDirection.z
-    },
-    radius
-  );
-  const focusTileX = lngToTileX(centerCartographic.lng, detailZoom);
-  const focusTileY = latToTileY(centerCartographic.lat, detailZoom);
-  const worldTileCount = 2 ** detailZoom;
-  const focusRadius = zoom >= maxZoom - 2 ? 3 : 2;
-  const focusedDetailTiles = detailCoordinates.filter((coordinate) => {
-    const dxRaw = Math.abs(coordinate.x - focusTileX);
-    const dx = Math.min(dxRaw, worldTileCount - dxRaw);
-    const dy = Math.abs(coordinate.y - focusTileY);
-    return dx <= focusRadius && dy <= focusRadius;
-  });
-  const mergedDetailTiles = focusedDetailTiles.length > 0
-    ? focusedDetailTiles
-    : [detailCoordinates[0]];
-  const refinedParentKeys = new Set(
-    mergedDetailTiles.map((coordinate) => coordinateKey(coordinateParentAtZoom(coordinate, zoom)))
-  );
-  const blendedCoordinates = uniqueCoordinates.filter(
-    (coordinate) => !refinedParentKeys.has(coordinateKey(coordinate))
-  );
-  blendedCoordinates.push(...mergedDetailTiles);
+  // Keep one extra ring at all zooms so the active-tile boundary stays off-screen,
+  // reducing seam exposure from visibility sampling at high zoom.
+  const paddedDetailCoordinates = uniqueSortedCoordinates(expandCoordinates(detailCoordinates, 1));
 
   return {
     zoom,
-    coordinates: uniqueSortedCoordinates(blendedCoordinates)
+    coordinates: paddedDetailCoordinates
   };
 }
