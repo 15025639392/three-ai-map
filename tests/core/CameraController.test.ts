@@ -1,10 +1,24 @@
 import { PerspectiveCamera, Vector3 } from "three";
 import { CameraController } from "../../src/core/CameraController";
+import { cartographicToCartesian } from "../../src/geo/projection";
 
 function projectPoint(camera: PerspectiveCamera, point: Vector3): Vector3 {
   camera.updateMatrixWorld(true);
   camera.updateProjectionMatrix();
   return point.clone().project(camera);
+}
+
+function projectPointToPixels(
+  camera: PerspectiveCamera,
+  point: Vector3,
+  width: number,
+  height: number
+): { x: number; y: number } {
+  const projected = projectPoint(camera, point);
+  return {
+    x: (projected.x * 0.5 + 0.5) * width,
+    y: (-projected.y * 0.5 + 0.5) * height
+  };
 }
 
 function getFrontSurfacePoint(camera: PerspectiveCamera): Vector3 {
@@ -285,5 +299,116 @@ describe("CameraController", () => {
 
     expect(after.x).toBeGreaterThan(before.x);
     expect(after.y).toBeGreaterThan(before.y);
+  });
+
+  it("keeps the original globe anchor under the pointer at high zoom", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.3 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(camera, new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z), 400, 400);
+    const nextPointer = {
+      x: anchorPixels.x + 24,
+      y: anchorPixels.y - 18
+    };
+
+    element.dispatchEvent(
+      new MouseEvent("mousedown", {
+        clientX: anchorPixels.x,
+        clientY: anchorPixels.y
+      })
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", {
+        clientX: nextPointer.x,
+        clientY: nextPointer.y
+      })
+    );
+    window.dispatchEvent(new MouseEvent("mouseup"));
+    controller.update();
+
+    const draggedAnchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    expect(draggedAnchorPixels.x).toBeCloseTo(nextPointer.x, 0);
+    expect(draggedAnchorPixels.y).toBeCloseTo(nextPointer.y, 0);
+  });
+
+  it("keeps inertia moving in the same direction after a high-zoom globe-anchor drag", () => {
+    const animationFrame = installAnimationFrameMock();
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.3 });
+    controller.update();
+
+    const before = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+    const nextPointer = {
+      x: before.x + 24,
+      y: before.y - 18
+    };
+
+    element.dispatchEvent(createTimedMouseEvent("mousedown", before.x, before.y, 100));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", nextPointer.x, nextPointer.y, 116));
+    controller.update();
+
+    const afterDrag = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+    window.dispatchEvent(createTimedMouseEvent("mouseup", nextPointer.x, nextPointer.y, 120));
+    animationFrame.runFrame(136);
+    controller.update();
+
+    const afterInertia = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    expect(afterInertia.x - afterDrag.x).toBeGreaterThanOrEqual(0);
+    expect(afterDrag.y - afterInertia.y).toBeGreaterThanOrEqual(0);
+
+    animationFrame.restore();
   });
 });

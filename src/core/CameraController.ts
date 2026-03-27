@@ -1,6 +1,7 @@
 import { Euler, PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { normalizeLongitude } from "../geo/ellipsoid";
 import { cartesianToCartographic } from "../geo/projection";
+import { intersectRayWithSphere } from "../geo/raycast";
 
 interface CameraView {
   lng: number;
@@ -25,6 +26,9 @@ const ORBIT_EULER = new Euler(0, 0, 0, "YXZ");
 const DRAG_ROTATION = new Quaternion();
 const ARC_BALL_VECTOR = new Vector3();
 const ARC_BALL_CURRENT = new Vector3();
+const GLOBE_DRAG_VECTOR = new Vector3();
+const POINTER_RAY_TARGET = new Vector3();
+const POINTER_RAY_DIRECTION = new Vector3();
 const ROTATION_AXIS = new Vector3();
 
 const DEFAULT_FRAME_TIME = 1000 / 60;
@@ -46,6 +50,8 @@ export class CameraController {
   private readonly orbitQuaternion = new Quaternion();
   private readonly dragVector = new Vector3();
   private readonly rotationVelocity = new Vector3();
+  private dragUsesGlobeAnchor = false;
+  private inertiaUsesGlobeAnchor = false;
   private zoomVelocity = 0;
   private animationFrameId: number | null = null;
   private previousAnimationTime: number | null = null;
@@ -90,6 +96,7 @@ export class CameraController {
     );
     this.orbitQuaternion.setFromEuler(ORBIT_EULER);
     this.rotationVelocity.set(0, 0, 0);
+    this.inertiaUsesGlobeAnchor = false;
     this.zoomVelocity = 0;
     this.stopInertiaLoop();
     this.onChange?.();
@@ -144,6 +151,17 @@ export class CameraController {
     this.rotationVelocity.set(0, 0, 0);
     this.lastPointerTime = this.getEventTime(event.timeStamp);
     this.stopInertiaLoopIfIdle();
+    const globeAnchor = this.projectPointerToGlobe(event.clientX, event.clientY);
+
+    if (globeAnchor) {
+      this.dragUsesGlobeAnchor = true;
+      this.inertiaUsesGlobeAnchor = true;
+      this.dragVector.copy(globeAnchor);
+      return;
+    }
+
+    this.dragUsesGlobeAnchor = false;
+    this.inertiaUsesGlobeAnchor = false;
     this.dragVector.copy(this.projectPointerToArcball(event.clientX, event.clientY));
   };
 
@@ -152,22 +170,43 @@ export class CameraController {
       return;
     }
 
-    ARC_BALL_CURRENT.copy(this.projectPointerToArcball(event.clientX, event.clientY));
+    if (this.dragUsesGlobeAnchor) {
+      const currentGlobeAnchor = this.projectPointerToGlobe(event.clientX, event.clientY);
+
+      if (!currentGlobeAnchor) {
+        return;
+      }
+
+      ARC_BALL_CURRENT.copy(currentGlobeAnchor);
+    } else {
+      ARC_BALL_CURRENT.copy(this.projectPointerToArcball(event.clientX, event.clientY));
+    }
 
     if (ARC_BALL_CURRENT.angleTo(this.dragVector) === 0) {
       return;
     }
 
     DRAG_ROTATION.setFromUnitVectors(ARC_BALL_CURRENT, this.dragVector);
-    this.orbitQuaternion.multiply(DRAG_ROTATION);
+
+    if (this.dragUsesGlobeAnchor) {
+      this.orbitQuaternion.premultiply(DRAG_ROTATION);
+    } else {
+      this.orbitQuaternion.multiply(DRAG_ROTATION);
+    }
+
     this.updateRotationVelocity(DRAG_ROTATION, this.getDeltaTime(this.lastPointerTime, event.timeStamp));
     this.lastPointerTime = this.getEventTime(event.timeStamp);
-    this.dragVector.copy(ARC_BALL_CURRENT);
+
+    if (!this.dragUsesGlobeAnchor) {
+      this.dragVector.copy(ARC_BALL_CURRENT);
+    }
+
     this.onChange?.();
   };
 
   private handlePointerUp = (): void => {
     this.isDragging = false;
+    this.dragUsesGlobeAnchor = false;
     this.lastPointerTime = null;
     this.startInertiaLoop();
   };
@@ -245,16 +284,24 @@ export class CameraController {
     if (rotationSpeed > MIN_ROTATION_SPEED) {
       ROTATION_AXIS.copy(this.rotationVelocity).normalize();
       DRAG_ROTATION.setFromAxisAngle(ROTATION_AXIS, rotationSpeed * deltaTime);
-      this.orbitQuaternion.multiply(DRAG_ROTATION);
+
+      if (this.inertiaUsesGlobeAnchor) {
+        this.orbitQuaternion.premultiply(DRAG_ROTATION);
+      } else {
+        this.orbitQuaternion.multiply(DRAG_ROTATION);
+      }
+
       this.rotationVelocity.multiplyScalar(Math.exp(-ROTATION_DAMPING * deltaTime));
 
       if (this.rotationVelocity.length() <= MIN_ROTATION_SPEED) {
         this.rotationVelocity.set(0, 0, 0);
+        this.inertiaUsesGlobeAnchor = false;
       }
 
       changed = true;
     } else {
       this.rotationVelocity.set(0, 0, 0);
+      this.inertiaUsesGlobeAnchor = false;
     }
 
     if (Math.abs(this.zoomVelocity) > MIN_ZOOM_SPEED) {
@@ -340,5 +387,40 @@ export class CameraController {
     }
 
     return ARC_BALL_VECTOR.normalize();
+  }
+
+  private projectPointerToGlobe(clientX: number, clientY: number): Vector3 | null {
+    const rect = this.element.getBoundingClientRect();
+    const width = rect.width || this.element.clientWidth || 1;
+    const height = rect.height || this.element.clientHeight || 1;
+    const x = ((clientX - rect.left) / width) * 2 - 1;
+    const y = -((clientY - rect.top) / height) * 2 + 1;
+
+    this.update();
+    this.camera.updateMatrixWorld(true);
+    this.camera.updateProjectionMatrix();
+
+    POINTER_RAY_TARGET.set(x, y, 0.5).unproject(this.camera);
+    POINTER_RAY_DIRECTION.copy(POINTER_RAY_TARGET).sub(this.camera.position).normalize();
+
+    const hit = intersectRayWithSphere(
+      {
+        x: this.camera.position.x,
+        y: this.camera.position.y,
+        z: this.camera.position.z
+      },
+      {
+        x: POINTER_RAY_DIRECTION.x,
+        y: POINTER_RAY_DIRECTION.y,
+        z: POINTER_RAY_DIRECTION.z
+      },
+      this.globeRadius
+    );
+
+    if (!hit) {
+      return null;
+    }
+
+    return GLOBE_DRAG_VECTOR.set(hit.x, hit.y, hit.z).normalize();
   }
 }
