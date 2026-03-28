@@ -14,7 +14,7 @@ import { cartographicToCartesian } from "../geo/projection";
 import { TileCache } from "../tiles/TileCache";
 import { TerrariumDecoder } from "../tiles/TerrariumDecoder";
 import { TileScheduler } from "../tiles/TileScheduler";
-import { defaultTileLoader, type TileSource } from "../tiles/tileLoader";
+import { defaultTileLoader, corsTileLoader, type TileSource } from "../tiles/tileLoader";
 import {
   selectSurfaceTileCoordinates,
   getSurfaceTileBounds,
@@ -177,7 +177,7 @@ async function defaultElevationLoader(
   templateUrl: string,
   decoder: TerrariumDecoder
 ): Promise<ElevationTileData> {
-  const source = await defaultTileLoader(coordinate, templateUrl);
+  const source = await corsTileLoader(coordinate, templateUrl);
   const canvas = document.createElement("canvas");
   canvas.width = "width" in source ? source.width : 256;
   canvas.height = "height" in source ? source.height : 256;

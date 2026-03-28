@@ -50,7 +50,7 @@ export { PerformanceMonitor } from "./core/PerformanceMonitor";
 export { PostProcessing } from "./core/PostProcessing";
 
 // Tile Infrastructure
-export { defaultTileLoader, type TileSource } from "./tiles/tileLoader";
+export { defaultTileLoader, corsTileLoader, type TileSource } from "./tiles/tileLoader";
 export { FrustumCuller } from "./tiles/FrustumCuller";
 
 // Spatial Index

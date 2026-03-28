@@ -2,7 +2,7 @@ import { Layer, LayerContext } from "./Layer";
 import { TileCache } from "../tiles/TileCache";
 import { TileScheduler } from "../tiles/TileScheduler";
 import { TileCoordinate } from "../tiles/TileViewport";
-import { defaultTileLoader, type TileSource } from "../tiles/tileLoader";
+import { corsTileLoader, type TileSource } from "../tiles/tileLoader";
 import { ElevationSampler } from "../globe/GlobeMesh";
 import { TerrariumDecoder } from "../tiles/TerrariumDecoder";
 
@@ -37,7 +37,7 @@ export class ElevationLayer extends Layer {
       options.templateUrl ?? "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
     this.scheduler = new TileScheduler({
       concurrency: options.concurrency ?? 4,
-      loadTile: options.loadTile ?? ((coordinate: TileCoordinate) => defaultTileLoader(coordinate, templateUrl))
+      loadTile: options.loadTile ?? ((coordinate: TileCoordinate) => corsTileLoader(coordinate, templateUrl))
     });
     const worldTileCount = 2 ** this.zoom;
     this.canvas = document.createElement("canvas");
