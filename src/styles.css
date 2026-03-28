@@ -100,6 +100,62 @@ p {
   min-height: 58px;
 }
 
+/* ---- City & Route Lists ---- */
+
+.city-list,
+.route-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.city-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s;
+  font-size: .9rem;
+}
+
+.city-item:hover {
+  background: rgba(141, 170, 245, 0.1);
+}
+
+.city-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.city-name {
+  color: rgba(231, 238, 251, 0.9);
+}
+
+.route-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: .85rem;
+  color: rgba(231, 238, 251, 0.7);
+}
+
+.route-arrow {
+  color: rgba(141, 170, 245, 0.6);
+}
+
+h2 {
+  margin-top: 20px;
+}
+
+.panel h2:first-child {
+  margin-top: 0;
+}
+
 @media (max-width: 960px) {
   .workspace {
     grid-template-columns: 1fr;

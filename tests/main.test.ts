@@ -14,8 +14,10 @@ describe("mountApp", () => {
 
     await mountApp(container);
 
-    expect(container.textContent).toContain("Three.js Globe Engine");
+    expect(container.textContent).toContain("Globe Engine Demo");
     expect(container.querySelector("main")).not.toBeNull();
+    expect(container.querySelector(".city-list")).not.toBeNull();
+    expect(container.querySelector(".route-list")).not.toBeNull();
     expect(runBasicGlobe).toHaveBeenCalledTimes(1);
   });
 });

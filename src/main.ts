@@ -2,113 +2,177 @@ import "./styles.css";
 import { computeTargetZoom } from "./tiles/TileViewport";
 import type { GlobeEngine } from "./index";
 
+/* ------------------------------------------------------------------ */
+/*  City data shared between UI and globe                              */
+/* ------------------------------------------------------------------ */
+
+const CITIES = [
+  { name: "Shanghai",  lng: 121.47, lat: 31.23,  color: "#ffd166" },
+  { name: "Tokyo",     lng: 139.69, lat: 35.69,  color: "#ff8f70" },
+  { name: "New York",  lng: -74.00, lat: 40.71,  color: "#6ad8ff" },
+  { name: "London",    lng:  -0.12, lat: 51.51,  color: "#c084fc" },
+  { name: "Sydney",    lng: 151.21, lat:-33.87,  color: "#36d695" },
+  { name: "São Paulo", lng: -46.63, lat:-23.55,  color: "#fb923c" },
+  { name: "Dubai",     lng:  55.27, lat: 25.20,  color: "#f472b6" },
+  { name: "Cape Town", lng:  18.42, lat:-33.92,  color: "#38bdf8" },
+];
+
+const ROUTES = [
+  { from: "Shanghai",  to: "New York" },
+  { from: "London",    to: "Tokyo"    },
+  { from: "Dubai",     to: "Sydney"   },
+  { from: "São Paulo", to: "Cape Town"},
+];
+
+/* ------------------------------------------------------------------ */
+/*  Mount                                                              */
+/* ------------------------------------------------------------------ */
 
 export async function mountApp(container: HTMLElement): Promise<void> {
+  const cityItems = CITIES.map(c =>
+    `<li class="city-item" data-lng="${c.lng}" data-lat="${c.lat}" data-name="${c.name}">
+       <span class="city-dot" style="background:${c.color}"></span>
+       <span class="city-name">${c.name}</span>
+     </li>`
+  ).join("");
+
+  const routeItems = ROUTES.map(r =>
+    `<li class="route-item">
+       <span>${r.from}</span><span class="route-arrow">&rarr;</span><span>${r.to}</span>
+     </li>`
+  ).join("");
+
   container.innerHTML = `
     <main class="shell">
       <section class="intro">
-        <p class="eyebrow">Phase 5</p>
-        <h1>Three.js Globe Engine</h1>
+        <p class="eyebrow">Three-Map v1.0</p>
+        <h1>Globe Engine Demo</h1>
         <p>
-          Unified surface tile meshes now combine imagery and DEM on curved globe patches over a
-          lightweight base globe, while the runtime keeps atmospheric rendering, unified events and
-          inertia controls.
+          A complete 3-D globe engine built on Three.js &mdash; tile imagery, elevation, markers,
+          polylines, polygons, flight-arc animation, performance monitoring and more.
         </p>
       </section>
+
       <section class="workspace">
         <div class="viewport" id="globe-stage"></div>
+
         <aside class="panel">
-          <h2>Interaction</h2>
-          <p>Drag to orbit with inertia, wheel to zoom with inertia, cross the poles freely, then inspect phase-5 surface tile meshes, deep zoom imagery, terrain detail and unified click events with lng/lat coordinates.</p>
+          <h2>Controls</h2>
+          <p>Drag to orbit &middot; Scroll to zoom &middot; Click to inspect &middot; Click a city below to fly</p>
+
           <div class="readout" id="view-output">View: loading...</div>
-          <div class="readout" id="pick-output">Loading globe runtime...</div>
+          <div class="readout" id="perf-output">FPS: --</div>
+          <div class="readout" id="pick-output">Loading globe&hellip;</div>
+
+          <h2>Cities</h2>
+          <ul class="city-list">${cityItems}</ul>
+
+          <h2>Flight Arcs</h2>
+          <ul class="route-list">${routeItems}</ul>
         </aside>
       </section>
     </main>
   `;
 
-  const stage = container.querySelector<HTMLElement>("#globe-stage");
+  const stage      = container.querySelector<HTMLElement>("#globe-stage");
   const viewOutput = container.querySelector<HTMLElement>("#view-output");
-  const output = container.querySelector<HTMLElement>("#pick-output");
+  const perfOutput = container.querySelector<HTMLElement>("#perf-output");
+  const pickOutput = container.querySelector<HTMLElement>("#pick-output");
 
-  if (!stage || !output || !viewOutput) {
+  if (!stage || !viewOutput || !perfOutput || !pickOutput) {
     throw new Error("Missing demo mount points");
   }
 
+  /* ---- engine ---- */
   const { runBasicGlobe } = await import("../examples/basic-globe");
-  const engine = runBasicGlobe(stage, output);
+  const engine = runBasicGlobe(stage, pickOutput);
 
   if (!engine) {
     viewOutput.textContent = "View: unavailable";
     return;
   }
 
+  /* ---- city fly-to ---- */
+  container.querySelector(".city-list")!.addEventListener("click", (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>(".city-item");
+    if (!target) return;
+    const lng = Number(target.dataset.lng);
+    const lat = Number(target.dataset.lat);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+
+    const from = engine.getView();
+    const to   = { lng, lat, altitude: 1.6 };
+    const start = performance.now();
+    const duration = 1800;
+
+    const step = () => {
+      const t = Math.min((performance.now() - start) / duration, 1);
+      const ease = t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
+      engine.setView({
+        lng: from.lng + (to.lng - from.lng) * ease,
+        lat: from.lat + (to.lat - from.lat) * ease,
+        altitude: from.altitude + (to.altitude - from.altitude) * ease,
+      });
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+
+  /* ---- URL params ---- */
   const params = new URLSearchParams(window.location.search);
-  const lng = Number(params.get("lng"));
-  const lat = Number(params.get("lat"));
-  const altitude = Number(params.get("alt"));
-  const zoom = Number(params.get("z"));
-  const canSetView = typeof (engine as { setView?: unknown }).setView === "function";
-  const canReadView = typeof (engine as { getView?: unknown }).getView === "function";
-  const hasSceneCamera = Boolean((engine as { sceneSystem?: { camera?: unknown } }).sceneSystem?.camera);
-  const hasRadius = Number.isFinite((engine as { radius?: number }).radius);
+  const urlLng = Number(params.get("lng"));
+  const urlLat = Number(params.get("lat"));
+  const urlAlt = Number(params.get("alt"));
+  const urlZoom = Number(params.get("z"));
 
-  const computeAltitudeFromZoom = (z: number): number => {
-    const safeZoom = Math.max(0, z);
-    return (engine.radius * 4) / 2 ** safeZoom;
-  };
-
-  const updateViewReadout = (): void => {
-    if (!canReadView || !hasSceneCamera || !hasRadius) {
-      viewOutput.textContent = "View: unavailable";
-      return;
-    }
-
-    const view = engine.getView();
-    const viewportWidth = stage.clientWidth || stage.getBoundingClientRect().width || 1;
-    const viewportHeight = stage.clientHeight || stage.getBoundingClientRect().height || 1;
-    const estimatedZoom = computeTargetZoom({
-      camera: engine.sceneSystem.camera,
-      viewportWidth,
-      viewportHeight,
-      radius: engine.radius,
-      tileSize: 256,
-      minZoom: 1,
-      maxZoom: 22
-    });
-    const lngText = view.lng.toFixed(6);
-    const latText = view.lat.toFixed(6);
-    const altitudeText = view.altitude.toFixed(6);
-    const zoomText = estimatedZoom.toFixed(3);
-
-    viewOutput.textContent =
-      `lng:${lngText} lat:${latText} alt:${altitudeText} z:${zoomText}`;
-  };
-
-  if (Number.isFinite(lng) && Number.isFinite(lat) && Number.isFinite(altitude)) {
-    if (canSetView) {
-      engine.setView({ lng, lat, altitude });
-    }
-  } else if (Number.isFinite(lng) && Number.isFinite(lat) && Number.isFinite(zoom)) {
-    if (canSetView) {
-      engine.setView({ lng, lat, altitude: computeAltitudeFromZoom(zoom) });
-    }
+  if (Number.isFinite(urlLng) && Number.isFinite(urlLat) && Number.isFinite(urlAlt)) {
+    engine.setView({ lng: urlLng, lat: urlLat, altitude: urlAlt });
+  } else if (Number.isFinite(urlLng) && Number.isFinite(urlLat) && Number.isFinite(urlZoom)) {
+    const altitude = (engine.radius * 4) / 2 ** Math.max(0, urlZoom);
+    engine.setView({ lng: urlLng, lat: urlLat, altitude });
   }
 
-  updateViewReadout();
-  const viewReadoutIntervalId = window.setInterval(updateViewReadout, 120);
-  window.addEventListener("beforeunload", () => {
-    window.clearInterval(viewReadoutIntervalId);
-  }, { once: true });
+  /* ---- periodic readouts ---- */
+  const tick = (): void => {
+    // view
+    try {
+      const view = engine.getView();
+      const vw = stage.clientWidth  || 1;
+      const vh = stage.clientHeight || 1;
+      const z  = computeTargetZoom({
+        camera: engine.sceneSystem.camera,
+        viewportWidth: vw,
+        viewportHeight: vh,
+        radius: engine.radius,
+        tileSize: 256,
+        minZoom: 1,
+        maxZoom: 22,
+      });
+      viewOutput.textContent =
+        `lng:${view.lng.toFixed(4)} lat:${view.lat.toFixed(4)} alt:${view.altitude.toFixed(3)} z:${z.toFixed(2)}`;
+    } catch { /* ignore during init */ }
+
+    // perf
+    const pm = (window as any).__perfMonitor;
+    if (pm) {
+      const fps = pm.getFPS();
+      const drops = pm.getFrameDrops();
+      perfOutput.textContent = `FPS: ${fps.toFixed(1)} | Drops: ${drops}`;
+    }
+  };
+
+  tick();
+  const id = window.setInterval(tick, 200);
+  window.addEventListener("beforeunload", () => window.clearInterval(id), { once: true });
 }
+
+/* ------------------------------------------------------------------ */
+/*  Bootstrap                                                          */
+/* ------------------------------------------------------------------ */
 
 export function bootstrap(): void {
   const app = document.querySelector<HTMLDivElement>("#app");
-
-  if (!app) {
-    throw new Error("Missing #app container");
-  }
-
+  if (!app) throw new Error("Missing #app container");
   void mountApp(app);
 }
 
