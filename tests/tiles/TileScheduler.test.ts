@@ -17,4 +17,28 @@ describe("TileScheduler", () => {
     expect(second).toBe("tile");
     expect(loader).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects queued requests when clear() is called", async () => {
+    let resolveFirst!: (value: string) => void;
+    const loader = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+    const scheduler = new TileScheduler<string>({
+      concurrency: 1,
+      loadTile: loader
+    });
+
+    const first = scheduler.request("0/0/0", { z: 0, x: 0, y: 0 });
+    const second = scheduler.request("0/0/1", { z: 0, x: 0, y: 1 });
+
+    scheduler.clear();
+    resolveFirst("tile");
+    await first;
+    await expect(second).rejects.toThrow("TileScheduler cleared");
+
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
 });

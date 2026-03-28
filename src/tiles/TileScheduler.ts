@@ -44,6 +44,10 @@ export class TileScheduler<TValue, TPayload = unknown> {
   }
 
   clear(): void {
+    const error = new Error("TileScheduler cleared");
+    for (const request of this.queue) {
+      request.reject(error);
+    }
     this.queue.length = 0;
     this.inflight.clear();
     this.activeCount = 0;

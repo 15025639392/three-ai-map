@@ -9,7 +9,6 @@ const {
   addPolygonMock,
   SurfaceTileLayerMock,
   ImageryLayerMock,
-  TiledImageryLayerMock,
   ElevationLayerMock
 } = vi.hoisted(() => {
   const addLayerMock = vi.fn();
@@ -36,10 +35,6 @@ const {
     id,
     ready: () => Promise.resolve()
   }));
-  const TiledImageryLayerMock = vi.fn().mockImplementation((id: string) => ({
-    id,
-    ready: () => Promise.resolve()
-  }));
   const ElevationLayerMock = vi.fn().mockImplementation((id: string) => ({
     id,
     ready: () => Promise.resolve()
@@ -56,7 +51,6 @@ const {
     addPolygonMock,
     SurfaceTileLayerMock,
     ImageryLayerMock,
-    TiledImageryLayerMock,
     ElevationLayerMock
   };
 });
@@ -71,10 +65,6 @@ vi.mock("../../src/layers/SurfaceTileLayer", () => ({
 
 vi.mock("../../src/layers/ImageryLayer", () => ({
   ImageryLayer: ImageryLayerMock
-}));
-
-vi.mock("../../src/layers/TiledImageryLayer", () => ({
-  TiledImageryLayer: TiledImageryLayerMock
 }));
 
 vi.mock("../../src/layers/ElevationLayer", () => ({
@@ -96,7 +86,6 @@ describe("runBasicGlobe", () => {
     addPolygonMock.mockClear();
     SurfaceTileLayerMock.mockClear();
     ImageryLayerMock.mockClear();
-    TiledImageryLayerMock.mockClear();
     ElevationLayerMock.mockClear();
     getContextSpy = vi
       .spyOn(HTMLCanvasElement.prototype, "getContext")
@@ -122,7 +111,7 @@ describe("runBasicGlobe", () => {
     getContextSpy.mockRestore();
   });
 
-  it("loads phase-5 surface tiles on top of remote imagery base layer", () => {
+  it("loads surface tiles on top of elevation layer", () => {
     const container = document.createElement("div");
     const output = document.createElement("div");
 
@@ -140,8 +129,7 @@ describe("runBasicGlobe", () => {
         skirtDepthMeters: 1400
       })
     );
-    expect(TiledImageryLayerMock).toHaveBeenCalledTimes(1);
     expect(ElevationLayerMock).toHaveBeenCalledTimes(1);
-    expect(addLayerMock).toHaveBeenCalledTimes(3);
+    expect(addLayerMock).toHaveBeenCalledTimes(2);
   });
 });

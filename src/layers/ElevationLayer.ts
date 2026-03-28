@@ -2,10 +2,9 @@ import { Layer, LayerContext } from "./Layer";
 import { TileCache } from "../tiles/TileCache";
 import { TileScheduler } from "../tiles/TileScheduler";
 import { TileCoordinate } from "../tiles/TileViewport";
+import { defaultTileLoader, type TileSource } from "../tiles/tileLoader";
 import { ElevationSampler } from "../globe/GlobeMesh";
 import { TerrariumDecoder } from "../tiles/TerrariumDecoder";
-
-type TileSource = HTMLCanvasElement | HTMLImageElement | ImageBitmap | OffscreenCanvas;
 
 interface ElevationLayerOptions {
   zoom?: number;
@@ -15,42 +14,6 @@ interface ElevationLayerOptions {
   exaggeration?: number;
   templateUrl?: string;
   loadTile?: (coordinate: TileCoordinate) => Promise<TileSource>;
-}
-
-async function defaultTileLoader(
-  coordinate: TileCoordinate,
-  templateUrl: string
-): Promise<TileSource> {
-  const url = templateUrl
-    .replace("{z}", `${coordinate.z}`)
-    .replace("{x}", `${coordinate.x}`)
-    .replace("{y}", `${coordinate.y}`);
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Failed to load elevation tile ${url}`);
-  }
-
-  const blob = await response.blob();
-
-  if (typeof createImageBitmap === "function") {
-    return createImageBitmap(blob);
-  }
-
-  return await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    const objectUrl = URL.createObjectURL(blob);
-    image.crossOrigin = "anonymous";
-    image.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(image);
-    };
-    image.onerror = (error) => {
-      URL.revokeObjectURL(objectUrl);
-      reject(error);
-    };
-    image.src = objectUrl;
-  });
 }
 
 export class ElevationLayer extends Layer {
@@ -98,6 +61,7 @@ export class ElevationLayer extends Layer {
   onRemove(context: LayerContext): void {
     context.globe.setElevationSampler(null);
     this.context = null;
+    this.loadPromise = null;
   }
 
   async ready(): Promise<void> {
@@ -163,9 +127,21 @@ export class ElevationLayer extends Layer {
     return (u: number, v: number): number => {
       const wrappedU = ((u % 1) + 1) % 1;
       const clampedV = Math.max(0, Math.min(1, v));
-      const x = Math.min(width - 1, Math.floor(wrappedU * (width - 1)));
-      const y = Math.min(height - 1, Math.floor((1 - clampedV) * (height - 1)));
-      return heights[y * width + x];
+      const fx = wrappedU * (width - 1);
+      const fy = (1 - clampedV) * (height - 1);
+      const x0 = Math.min(width - 2, Math.max(0, Math.floor(fx)));
+      const y0 = Math.min(height - 2, Math.max(0, Math.floor(fy)));
+      const x1 = x0 + 1;
+      const y1 = y0 + 1;
+      const tx = fx - x0;
+      const ty = fy - y0;
+      const topLeft = heights[y0 * width + x0];
+      const topRight = heights[y0 * width + x1];
+      const bottomLeft = heights[y1 * width + x0];
+      const bottomRight = heights[y1 * width + x1];
+      const top = topLeft * (1 - tx) + topRight * tx;
+      const bottom = bottomLeft * (1 - tx) + bottomRight * tx;
+      return top * (1 - ty) + bottom * ty;
     };
   }
 }

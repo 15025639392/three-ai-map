@@ -115,6 +115,8 @@ export function computeTargetZoom({
 
   const distance = camera.position.length();
   const altitude = Math.max(0.05, distance - radius);
+  // Scale factor chosen so that a camera at altitude ≈ radius sees ~4 tiles across
+  // the equator (tuned for visually pleasant tile density at medium range).
   const zoom = Math.log2((radius / altitude) * 4);
   return Math.max(minZoom, Math.min(maxZoom, Math.round(zoom)));
 }

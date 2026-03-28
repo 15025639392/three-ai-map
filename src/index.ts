@@ -16,7 +16,6 @@ export { PolygonLayer } from "./layers/PolygonLayer";
 export { ImageryLayer } from "./layers/ImageryLayer";
 
 // Tile Layers
-export { TiledImageryLayer } from "./layers/TiledImageryLayer";
 export { ElevationLayer } from "./layers/ElevationLayer";
 export { SurfaceTileLayer } from "./layers/SurfaceTileLayer";
 
@@ -47,6 +46,9 @@ export type { Animation, AnimationOptions } from "./core/Animation";
 export { GestureController } from "./core/GestureController";
 export { PerformanceMonitor } from "./core/PerformanceMonitor";
 export { PostProcessing } from "./core/PostProcessing";
+
+// Tile Infrastructure
+export { defaultTileLoader, type TileSource } from "./tiles/tileLoader";
 export { FrustumCuller } from "./tiles/FrustumCuller";
 
 // Spatial Index

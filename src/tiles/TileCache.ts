@@ -1,9 +1,15 @@
+export interface TileCacheOptions<TValue = unknown> {
+  onEvict?: (key: string, value: TValue) => void;
+}
+
 export class TileCache<TValue> {
   private readonly capacity: number;
+  private readonly onEvict: ((key: string, value: TValue) => void) | undefined;
   private readonly items = new Map<string, TValue>();
 
-  constructor(capacity: number) {
+  constructor(capacity: number, options?: TileCacheOptions<TValue>) {
     this.capacity = capacity;
+    this.onEvict = options?.onEvict;
   }
 
   get(key: string): TValue | undefined {
@@ -29,10 +35,19 @@ export class TileCache<TValue> {
       return;
     }
 
-    const oldestKey = this.items.keys().next().value;
+    while (this.items.size > this.capacity) {
+      const oldestKey = this.items.keys().next().value;
 
-    if (oldestKey) {
+      if (!oldestKey) {
+        break;
+      }
+
+      const evictedValue = this.items.get(oldestKey);
       this.items.delete(oldestKey);
+
+      if (this.onEvict && evictedValue !== undefined) {
+        this.onEvict(oldestKey, evictedValue);
+      }
     }
   }
 

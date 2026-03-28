@@ -4,7 +4,6 @@ import {
   ElevationLayer,
   ImageryLayer,
   SurfaceTileLayer,
-  TiledImageryLayer,
   AnimationManager,
   PerformanceMonitor,
   haversineDistance
@@ -147,24 +146,17 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   });
 
   /* ---- tile layers ---- */
-  const baseImagery   = new TiledImageryLayer("imagery-tiles", { minZoom: 1, maxZoom: 8, tileSize: 128, cacheSize: 48, concurrency: 4 });
   const baseElevation = new ElevationLayer("elevation-tiles",  { zoom: 3, tileSize: 256, cacheSize: 24, concurrency: 4, exaggeration: 1 });
   const surfaceTiles  = new SurfaceTileLayer("surface-tiles",   { minZoom: 3, maxZoom: 11, tileSize: 128, meshSegments: 16, cacheSize: 96, concurrency: 6, elevationExaggeration: 1, zoomExaggerationBoost: 6, textureUvInsetPixels: 1, skirtDepthMeters: 1400 });
 
-  engine.addLayer(baseImagery);
   engine.addLayer(baseElevation);
   engine.addLayer(surfaceTiles);
 
-  baseImagery.ready().catch(() => {
-    engine.removeLayer("imagery-tiles");
-    engine.addLayer(new ImageryLayer("imagery-fallback", createProceduralEarthTexture()));
-    output.textContent = "Online tiles failed – switched to procedural imagery";
-  });
   baseElevation.ready().catch(() => {
-    output.textContent += " | Elevation tiles use fallback";
+    output.textContent = "Elevation tiles use fallback";
   });
   surfaceTiles.ready().catch(() => {
-    output.textContent += " | Surface tiles use fallback";
+    output.textContent = "Surface tiles use fallback";
   });
 
   /* ---- markers ---- */

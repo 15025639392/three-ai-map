@@ -15,5 +15,6 @@ export class ImageryLayer extends Layer {
 
   onRemove(context: LayerContext): void {
     context.globe.setTexture(null);
+    this.texture.dispose();
   }
 }
