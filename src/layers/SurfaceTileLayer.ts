@@ -282,7 +282,8 @@ function buildSurfaceTileGeometry(
       let lng = west + (east - west) * u;
       let latOut = lat;
       const heightMeters = elevationTile ? sampleElevation(elevationTile, u, v) : 0;
-      const height = (heightMeters / WGS84_RADIUS) * radius * elevationExaggeration;
+      const TILE_DEPTH_OFFSET = 0.001; // Geometric offset to avoid z-fighting
+      const height = (heightMeters / WGS84_RADIUS) * radius * elevationExaggeration + TILE_DEPTH_OFFSET;
 
       if (coordTransform) {
         const transformed = coordTransform(lng, latOut);
@@ -370,6 +371,7 @@ export class SurfaceTileLayer extends Layer {
   private readyPromise: Promise<void> = Promise.resolve();
   private currentSelectionKey = "";
   private renderInvalidationQueued = false;
+  private lastCameraMatrixHash = "";
 
   constructor(id: string, options: SurfaceTileLayerOptions = {}) {
     super(id);
@@ -383,7 +385,16 @@ export class SurfaceTileLayer extends Layer {
     this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
     this.coordTransform = options.coordTransform;
     this.selectTiles = options.selectTiles ?? selectSurfaceTileCoordinates;
-    this.imageryCache = new TileCache<TileSource>(options.cacheSize ?? 96);
+    this.imageryCache = new TileCache<TileSource>(options.cacheSize ?? 96, {
+      onEvict: (_key, source) => {
+        if (source instanceof HTMLCanvasElement) {
+          source.width = 0;
+          source.height = 0;
+        } else if ("close" in source) {
+          (source as ImageBitmap).close();
+        }
+      }
+    });
     this.elevationCache = new TileCache<ElevationTileData>(options.cacheSize ?? 96);
     const imageryTemplateUrl =
       options.imageryTemplateUrl ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -408,12 +419,14 @@ export class SurfaceTileLayer extends Layer {
 
   onAdd(context: LayerContext): void {
     this.context = context;
+    context.globe.mesh.visible = false;
     context.scene.add(this.group);
     this.syncTiles(context);
   }
 
   onRemove(context: LayerContext): void {
     context.scene.remove(this.group);
+    context.globe.mesh.visible = true;
     this.clearActiveTiles();
     this.context = null;
     this.currentSelectionKey = "";
@@ -441,6 +454,14 @@ export class SurfaceTileLayer extends Layer {
   }
 
   private syncTiles(context: LayerContext): void {
+    const cameraMatrix = context.camera.matrixWorld.elements;
+    const cameraHash = cameraMatrix[12].toFixed(4) + cameraMatrix[13].toFixed(4) + cameraMatrix[14].toFixed(4);
+
+    if (cameraHash === this.lastCameraMatrixHash && this.currentSelectionKey) {
+      return;
+    }
+
+    this.lastCameraMatrixHash = cameraHash;
     const viewportWidth =
       context.rendererElement?.clientWidth || context.rendererElement?.width || 1;
     const viewportHeight =
@@ -524,39 +545,43 @@ export class SurfaceTileLayer extends Layer {
     const entry: SurfaceTileEntry = {
       mesh: null,
       skirtMaskKey,
-      promise: this.loadTileMesh(
-        coordinate,
-        radius,
-        this.computeElevationExaggeration(coordinate.z),
-        skirtMask,
-        key,
-        () => this.activeTiles.get(key) === entry
-      ).then((mesh) => {
-        const current = this.activeTiles.get(key);
-
-        if (!current || current !== entry) {
-          mesh.geometry.dispose();
-          mesh.material.map?.dispose();
-          mesh.material.dispose();
-          return;
-        }
-
-        entry.mesh = mesh;
-        this.group.add(mesh);
-        this.invalidateRender();
-      }).catch((error) => {
-        if (error instanceof StaleSurfaceTileError) {
-          return;
-        }
-
-        if (this.activeTiles.get(key) === entry) {
-          this.activeTiles.delete(key);
-        }
-
-        throw error;
-      })
+      promise: null!
     };
     this.activeTiles.set(key, entry);
+
+    entry.promise = this.loadTileMesh(
+      coordinate,
+      radius,
+      this.computeElevationExaggeration(coordinate.z),
+      skirtMask,
+      key,
+      () => this.activeTiles.get(key) === entry
+    ).then((mesh) => {
+      const current = this.activeTiles.get(key);
+
+      if (!current || current !== entry) {
+        mesh.geometry.dispose();
+        mesh.material.map?.dispose();
+        mesh.material.dispose();
+        return;
+      }
+
+      entry.mesh = mesh;
+      this.group.add(mesh);
+      this.invalidateRender();
+    }).catch((error) => {
+      if (error instanceof StaleSurfaceTileError) {
+        return;
+      }
+
+      console.error(`[SurfaceTileLayer] Failed to load tile ${key}:`, error);
+
+      if (this.activeTiles.get(key) === entry) {
+        this.activeTiles.delete(key);
+      }
+
+      throw error;
+    });
     return entry.promise;
   }
 
@@ -610,9 +635,7 @@ export class SurfaceTileLayer extends Layer {
     const texture = createTexture(imagery);
     const material = new MeshStandardMaterial({
       map: texture,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1
+      depthTest: false, // Disable depth test to ensure visibility
     });
 
     if (!isCurrent()) {
@@ -624,6 +647,7 @@ export class SurfaceTileLayer extends Layer {
 
     const mesh = new Mesh(geometry, material);
     mesh.name = key;
+    mesh.renderOrder = 1; // Render after GlobeMesh
     return mesh;
   }
 

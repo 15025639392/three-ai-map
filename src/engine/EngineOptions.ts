@@ -26,6 +26,7 @@ export interface GlobeEngineOptions {
   radius?: number;
   background?: string;
   terrainStrength?: number;
+  showBaseGlobe?: boolean;
   camera?: Partial<Pick<PerspectiveCamera, "fov" | "near" | "far">>;
   rendererFactory?: (options: RendererFactoryOptions) => RendererAdapter;
 }

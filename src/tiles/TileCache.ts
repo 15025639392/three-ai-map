@@ -52,6 +52,11 @@ export class TileCache<TValue> {
   }
 
   clear(): void {
+    if (this.onEvict) {
+      for (const [key, value] of this.items) {
+        this.onEvict(key, value);
+      }
+    }
     this.items.clear();
   }
 }

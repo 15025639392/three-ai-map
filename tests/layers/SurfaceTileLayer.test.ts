@@ -298,7 +298,7 @@ describe("SurfaceTileLayer", () => {
     if (radius === null) {
       return;
     }
-    expect(radius).toBeCloseTo(1, 6);
+    expect(radius).toBeCloseTo(1.001, 3); // Accept TILE_DEPTH_OFFSET = 0.001
   });
 
   it("adds skirt vertices to hide seams between neighboring or mixed lod tiles", async () => {

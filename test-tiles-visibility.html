@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Tiles Visibility</title>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    #info {
+      position: absolute; top: 10px; left: 10px; color: white;
+      background: rgba(0,0,0,0.7); padding: 10px; border-radius: 4px;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Testing tiles visibility...</div>
+  <script type="module">
+    import { GlobeEngine, SurfaceTileLayer } from './src/index.ts';
+    
+    const container = document.body;
+    const info = document.getElementById('info');
+    
+    // Create engine
+    const engine = new GlobeEngine({ container, radius: 1 });
+    
+    // Create surface tile layer with Gaode satellite imagery
+    const surfaceTiles = new SurfaceTileLayer('surface-tiles', {
+      minZoom: 3,
+      maxZoom: 11,
+      tileSize: 256,
+      meshSegments: 16,
+      elevationExaggeration: 0, // Flat earth for testing
+      imageryTemplateUrl: 'https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'
+    });
+    
+    engine.addLayer(surfaceTiles);
+    
+    // Set initial view (Shanghai area)
+    engine.setView({ lng: 121.47, lat: 31.23, altitude: 2.0 });
+    
+    // Wait for tiles to load
+    let tileCount = 0;
+    setInterval(() => {
+      const tiles = surfaceTiles.getActiveTileKeys();
+      if (tiles.length !== tileCount) {
+        tileCount = tiles.length;
+        info.textContent = `Loaded ${tileCount} tiles | Keys: ${tiles.join(', ')}`;
+        console.log('Active tiles:', tiles);
+      }
+    }, 1000);
+    
+    // Expose for debugging
+    window.__engine = engine;
+    window.__tiles = surfaceTiles;
+  </script>
+</body>
+</html>

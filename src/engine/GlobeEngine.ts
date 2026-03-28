@@ -56,6 +56,7 @@ export class GlobeEngine {
     radius = 1,
     background = "#03060d",
     terrainStrength = 0,
+    showBaseGlobe = true,
     camera,
     rendererFactory = createDefaultRenderer
   }: GlobeEngineOptions) {
@@ -73,7 +74,9 @@ export class GlobeEngine {
     this.globe = new GlobeMesh({ radius, terrainStrength });
     this.atmosphere = new AtmosphereMesh(radius);
     this.starfield = new Starfield(1200, radius * 18);
-    this.sceneSystem.scene.add(this.globe.mesh);
+    if (showBaseGlobe) {
+      this.sceneSystem.scene.add(this.globe.mesh);
+    }
     this.sceneSystem.scene.add(this.atmosphere.mesh);
     this.sceneSystem.scene.add(this.starfield.points);
     this.layerManager = new LayerManager({
@@ -120,9 +123,9 @@ export class GlobeEngine {
   }
 
   render(): void {
-    this.layerManager.update(0);
     this.cameraController.update();
     this.sceneSystem.camera.updateMatrixWorld(true);
+    this.layerManager.update(0);
     this.rendererSystem.render(this.sceneSystem.scene, this.sceneSystem.camera);
   }
 

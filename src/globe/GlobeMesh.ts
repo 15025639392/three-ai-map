@@ -35,10 +35,14 @@ export class GlobeMesh {
     this.basePositions = new Float32Array(geometry.attributes.position.array);
     this.baseUvs = new Float32Array(geometry.attributes.uv.array);
     this.mesh = new Mesh(geometry, this.material);
+    this.mesh.renderOrder = -1; // Render first as base
     this.applyElevation();
   }
 
   setTexture(texture: Texture | null): void {
+    if (this.material.map && this.material.map !== texture) {
+      this.material.map.dispose();
+    }
     this.material.map = texture;
     this.material.needsUpdate = true;
   }
@@ -51,6 +55,7 @@ export class GlobeMesh {
 
   dispose(): void {
     this.mesh.geometry.dispose();
+    this.material.map?.dispose();
     this.material.dispose();
   }
 
