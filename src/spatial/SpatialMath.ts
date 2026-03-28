@@ -22,3 +22,7 @@ export function normalizeLongitude(lng: number): number {
 export function normalizeLatitude(lat: number): number {
   return Math.max(-90, Math.min(90, lat));
 }
+
+export function clampLatitude(lat: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, lat));
+}
