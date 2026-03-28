@@ -18,21 +18,23 @@ describe('CustomLayer', () => {
         return true;
       }
     });
-    
-    const result = layer.render({});
+
+    const result = layer.render({ time: 0, delta: 0, camera: null, renderer: null });
     expect(result).toBe(true);
   });
 
   it('updates custom content', () => {
+    let updateCalled = false;
     const layer = new CustomLayer({
       id: 'test-layer',
       update: (context) => {
+        updateCalled = true;
         return true;
       }
     });
-    
-    const result = layer.update({});
-    expect(result).toBe(true);
+
+    layer.update(16, { scene: null, camera: null, globe: null, radius: 1 });
+    expect(updateCalled).toBe(true);
   });
 
   it('handles custom events', () => {

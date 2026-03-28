@@ -50,9 +50,9 @@ describe('VectorTileLayer', () => {
     });
     
     const feature = {
-      type: 'line',
+      type: 'line' as const,
       layer: 'roads',
-      geometry: [[0, 0], [1, 1], [2, 2]]
+      geometry: [[[0, 0], [1, 1], [2, 2]]]
     };
     
     const styledFeature = layer.applyStyle(feature);

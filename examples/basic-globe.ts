@@ -1,9 +1,11 @@
 import { CanvasTexture } from "three";
-import { GlobeEngine } from "../src/engine/GlobeEngine";
-import { ElevationLayer } from "../src/layers/ElevationLayer";
-import { ImageryLayer } from "../src/layers/ImageryLayer";
-import { SurfaceTileLayer } from "../src/layers/SurfaceTileLayer";
-import { TiledImageryLayer } from "../src/layers/TiledImageryLayer";
+import {
+  GlobeEngine,
+  ElevationLayer,
+  ImageryLayer,
+  SurfaceTileLayer,
+  TiledImageryLayer
+} from "../src";
 
 function createProceduralEarthTexture(size = 2048): CanvasTexture {
   const canvas = document.createElement("canvas");

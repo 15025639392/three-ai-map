@@ -52,10 +52,12 @@ export class CustomLayer extends Layer {
     if (!this.renderCallback) return true;
     return this.renderCallback(context);
   }
-  
-  update(context: UpdateContext): boolean {
-    if (!this.updateCallback) return true;
-    return this.updateCallback(context);
+
+  override update(_deltaTime: number, _context: any): void {
+    if (!this._visible) return;
+    if (!this.updateCallback) return;
+    // Note: CustomLayer uses simplified UpdateContext, ignoring base LayerContext
+    this.updateCallback({ time: 0, delta: _deltaTime });
   }
   
   handleEvent(event: CustomEvent): boolean {

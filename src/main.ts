@@ -1,5 +1,7 @@
 import "./styles.css";
 import { computeTargetZoom } from "./tiles/TileViewport";
+import type { GlobeEngine } from "./index";
+
 
 export async function mountApp(container: HTMLElement): Promise<void> {
   container.innerHTML = `
