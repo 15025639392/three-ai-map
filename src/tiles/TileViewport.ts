@@ -9,6 +9,13 @@ export interface TileCoordinate {
   y: number;
 }
 
+export interface TileViewportSampleBounds {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
 interface TargetZoomOptions {
   camera: PerspectiveCamera;
   viewportWidth: number;
@@ -27,6 +34,8 @@ interface VisibleTileOptions {
   zoom: number;
   sampleColumns?: number;
   sampleRows?: number;
+  sampleBounds?: TileViewportSampleBounds;
+  paddingTiles?: number;
 }
 
 const SAMPLE_POINTER = new Vector2();
@@ -117,7 +126,9 @@ export function computeVisibleTileCoordinates({
   radius,
   zoom,
   sampleColumns = 6,
-  sampleRows = 4
+  sampleRows = 4,
+  sampleBounds,
+  paddingTiles
 }: VisibleTileOptions): TileCoordinate[] {
   const worldTileCount = 2 ** zoom;
   CENTER_POINT.copy(camera.position).normalize().multiplyScalar(radius);
@@ -134,16 +145,32 @@ export function computeVisibleTileCoordinates({
   let maxX = Number.NEGATIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
+  const bounds = sampleBounds ?? { left: 0, right: 1, top: 0, bottom: 1 };
+  const left = Math.max(0, Math.min(1, bounds.left));
+  const right = Math.max(0, Math.min(1, bounds.right));
+  const top = Math.max(0, Math.min(1, bounds.top));
+  const bottom = Math.max(0, Math.min(1, bounds.bottom));
+  const safeLeft = Math.min(left, right);
+  const safeRight = Math.max(left, right);
+  const safeTop = Math.min(top, bottom);
+  const safeBottom = Math.max(top, bottom);
+  const spanX = safeRight - safeLeft;
+  const spanY = safeBottom - safeTop;
 
   for (let row = 0; row < sampleRows; row += 1) {
+    const rowT = sampleRows <= 1 ? 0.5 : row / (sampleRows - 1);
+    const sampleY = (safeTop + rowT * spanY) * viewportHeight;
+
     for (let column = 0; column < sampleColumns; column += 1) {
+      const columnT = sampleColumns <= 1 ? 0.5 : column / (sampleColumns - 1);
+      const sampleX = (safeLeft + columnT * spanX) * viewportWidth;
       const hit = sampleCartographic(
         camera,
         viewportWidth,
         viewportHeight,
         radius,
-        (column / (sampleColumns - 1)) * viewportWidth,
-        (row / (sampleRows - 1)) * viewportHeight
+        sampleX,
+        sampleY
       );
 
       if (!hit) {
@@ -174,10 +201,11 @@ export function computeVisibleTileCoordinates({
     return [{ z: zoom, x: ((centerX % worldTileCount) + worldTileCount) % worldTileCount, y: centerY }];
   }
 
+  const padding = Math.max(0, Math.floor(paddingTiles ?? 1));
   const coordinates: TileCoordinate[] = [];
 
-  for (let tileY = Math.max(0, Math.floor(minY) - 1); tileY <= Math.min(worldTileCount - 1, Math.floor(maxY) + 1); tileY += 1) {
-    for (let tileX = Math.floor(minX) - 1; tileX <= Math.floor(maxX) + 1; tileX += 1) {
+  for (let tileY = Math.max(0, Math.floor(minY) - padding); tileY <= Math.min(worldTileCount - 1, Math.floor(maxY) + padding); tileY += 1) {
+    for (let tileX = Math.floor(minX) - padding; tileX <= Math.floor(maxX) + padding; tileX += 1) {
       coordinates.push({
         z: zoom,
         x: ((tileX % worldTileCount) + worldTileCount) % worldTileCount,

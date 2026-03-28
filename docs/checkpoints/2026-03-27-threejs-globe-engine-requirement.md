@@ -281,3 +281,28 @@
   - `npm run test:run` -> 仅 `tests/examples/basic-globe.test.ts` 失败（已知原因同上）
 - 下一步（唯一）：
   - 继续第六阶段剩余项：混合 LOD 四叉树与高缩放缝隙联合治理（含性能回归基线）。
+
+## 9) 2026-03-28 阶段记录（第六阶段剩余项：混合 LOD 四叉树 + 缝隙治理 + 性能回归基线）
+
+- 本阶段目标：
+  - surface tile 支持混合 LOD 叶子集：视口中心细化一级、外围保留父级，降低深缩放开销。
+  - 高缩放下缝隙联合治理：降低可见区域漏选与 LOD 边界的缝隙暴露概率。
+  - 增加性能回归基线：tile 数量与 zoom churn 有可自动验证的上限约束。
+- 本阶段已完成：
+  - `TileViewport.computeVisibleTileCoordinates()` 支持：
+    - `sampleBounds`：在屏幕中心区域取样（用于“只细化中心”的混合 LOD）。
+    - `paddingTiles`：控制最终瓦片矩形范围的外扩 tile 数（用于 focus 区域 tighter 选择，避免把中心选择膨胀成全屏）。
+  - `SurfaceTileTree.selectSurfaceTileCoordinates()` 改为生成 quadtree leaf set：
+    - 对可见父级瓦片集合按视口中心 focus 区域细化一级（父瓦片替换为 4 个子瓦片）。
+    - 在 `maxZoom` 或“细节瓦片集合较小”时回退为单一 detailed LOD，避免在最显眼处引入 LOD 边界。
+    - 对 coarse/detail 都保留额外一圈 padding，减少边缘漏选导致的缝隙暴露。
+  - 新增/更新回归基线测试：
+    - 默认视角：mixed leaf set 可显著减少瓦片数（例：`81` vs uniform `117`）。
+    - zoom 过程中累计 tile churn 有上限约束（例：`uniqueTiles: 415`，`selectionChanges: 31`）。
+    - Mexico seam repro 视角：允许混合 LOD，但必须满足“父级可见集完全覆盖”（每个父瓦片要么存在，要么四子瓦片齐全），避免漏选产生缝隙。
+- 阶段结论：
+  - 第六阶段剩余项已落地：混合 LOD 四叉树 + 缝隙治理策略 + 性能回归基线已补齐。
+- 本阶段验证：
+  - `npm run test:run` -> 通过（25 files / 69 tests）
+  - `npm run typecheck` -> 通过
+  - `npm run build` -> 通过（保留 bundle 体积告警）
