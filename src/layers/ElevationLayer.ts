@@ -3,6 +3,7 @@ import { TileCache } from "../tiles/TileCache";
 import { TileScheduler } from "../tiles/TileScheduler";
 import { TileCoordinate } from "../tiles/TileViewport";
 import { ElevationSampler } from "../globe/GlobeMesh";
+import { TerrariumDecoder } from "../tiles/TerrariumDecoder";
 
 type TileSource = HTMLCanvasElement | HTMLImageElement | ImageBitmap | OffscreenCanvas;
 
@@ -14,10 +15,6 @@ interface ElevationLayerOptions {
   exaggeration?: number;
   templateUrl?: string;
   loadTile?: (coordinate: TileCoordinate) => Promise<TileSource>;
-}
-
-function decodeTerrariumHeight(red: number, green: number, blue: number): number {
-  return red * 256 + green + blue / 256 - 32768;
 }
 
 async function defaultTileLoader(
@@ -63,6 +60,7 @@ export class ElevationLayer extends Layer {
   private readonly cache: TileCache<TileSource>;
   private readonly scheduler: TileScheduler<TileSource, TileCoordinate>;
   private readonly canvas: HTMLCanvasElement;
+  private readonly terrariumDecoder = new TerrariumDecoder();
   private context: LayerContext | null = null;
   private loadPromise: Promise<void> | null = null;
 
@@ -89,9 +87,10 @@ export class ElevationLayer extends Layer {
 
     if (!this.loadPromise) {
       this.loadPromise = this.loadGlobalElevation().then(() => {
-        const sampler = this.createElevationSampler();
-        context.globe.setElevationSampler(sampler, this.exaggeration);
-        context.requestRender?.();
+        return this.createElevationSampler().then((sampler) => {
+          context.globe.setElevationSampler(sampler, this.exaggeration);
+          context.requestRender?.();
+        });
       });
     }
   }
@@ -108,6 +107,7 @@ export class ElevationLayer extends Layer {
   dispose(): void {
     this.cache.clear();
     this.scheduler.clear();
+    this.terrariumDecoder.dispose();
   }
 
   private async loadGlobalElevation(): Promise<void> {
@@ -147,7 +147,7 @@ export class ElevationLayer extends Layer {
     );
   }
 
-  private createElevationSampler(): ElevationSampler {
+  private async createElevationSampler(): Promise<ElevationSampler> {
     const context = this.canvas.getContext("2d");
 
     if (!context) {
@@ -155,16 +155,17 @@ export class ElevationLayer extends Layer {
     }
 
     const imageData = context.getImageData(0, 0, this.canvas.width, this.canvas.height);
-    const { data, width, height } = imageData;
+    const { data } = imageData;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    const heights = await this.terrariumDecoder.decode(width, height, data);
 
     return (u: number, v: number): number => {
       const wrappedU = ((u % 1) + 1) % 1;
       const clampedV = Math.max(0, Math.min(1, v));
       const x = Math.min(width - 1, Math.floor(wrappedU * (width - 1)));
       const y = Math.min(height - 1, Math.floor((1 - clampedV) * (height - 1)));
-      const offset = (y * width + x) * 4;
-
-      return decodeTerrariumHeight(data[offset], data[offset + 1], data[offset + 2]);
+      return heights[y * width + x];
     };
   }
 }

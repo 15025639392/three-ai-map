@@ -145,8 +145,8 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     skirtDepthMeters: 1400
   });
   engine.addLayer(baseImagery);
-  // engine.addLayer(baseElevation);
-  // engine.addLayer(surfaceTiles);
+  engine.addLayer(baseElevation);
+  engine.addLayer(surfaceTiles);
   baseImagery.ready().catch(() => {
     engine.removeLayer("imagery-tiles");
     engine.addLayer(new ImageryLayer("imagery-fallback", createProceduralEarthTexture()));

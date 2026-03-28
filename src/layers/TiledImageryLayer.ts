@@ -22,6 +22,17 @@ interface TiledImageryLayerOptions {
   loadTile?: (coordinate: TileCoordinate) => Promise<TileSource>;
 }
 
+interface ProjectionRowLookupWorkerRequest {
+  id: number;
+  outputHeight: number;
+  mercatorHeight: number;
+}
+
+interface ProjectionRowLookupWorkerResponse {
+  id: number;
+  buffer: ArrayBuffer;
+}
+
 const DEFAULT_MAX_CANVAS_DIMENSION = 4096;
 const PROJECTION_PIXELS_PER_FRAME = 1024 * 1024;
 const MIN_PROJECTION_ROWS_PER_FRAME = 32;
@@ -122,6 +133,14 @@ export class TiledImageryLayer extends Layer {
   private readonly outputCanvas: HTMLCanvasElement;
   private readonly texture: Texture;
   private readonly drawnTileKeys = new Set<string>();
+  private projectionSourceYLookup: Float32Array | null = null;
+  private projectionSourceYLookupPromise: Promise<Float32Array> | null = null;
+  private projectionLookupWorker: Worker | null = null;
+  private projectionLookupRequestId = 0;
+  private readonly projectionLookupPending = new Map<number, {
+    resolve: (lookup: Float32Array) => void;
+    reject: (reason?: unknown) => void;
+  }>();
   private context: LayerContext | null = null;
   private readyPromise: Promise<void> = Promise.resolve();
   private currentViewKey = "";
@@ -168,6 +187,7 @@ export class TiledImageryLayer extends Layer {
       );
     this.paintPlaceholder();
     this.texture = new CanvasTexture(this.outputCanvas);
+    this.projectionLookupWorker = this.createProjectionLookupWorker();
   }
 
   onAdd(context: LayerContext): void {
@@ -199,6 +219,20 @@ export class TiledImageryLayer extends Layer {
       window.cancelAnimationFrame(this.projectionFrameId);
       this.projectionFrameId = null;
     }
+
+    for (const resolve of this.projectionResolvers) {
+      resolve();
+    }
+
+    this.projectionResolvers.length = 0;
+
+    for (const pending of this.projectionLookupPending.values()) {
+      pending.reject(new Error("Projection lookup disposed"));
+    }
+
+    this.projectionLookupPending.clear();
+    this.projectionLookupWorker?.terminate();
+    this.projectionLookupWorker = null;
   }
 
   private syncVisibleTiles(context: LayerContext): void {
@@ -292,14 +326,17 @@ export class TiledImageryLayer extends Layer {
       throw new Error("Output canvas context is not available");
     }
 
-    for (let y = startRow; y < endRow; y += 1) {
-      const latitude = 90 - ((y + 0.5) / this.outputCanvas.height) * 180;
-      const sourceY = mercatorYFromLatitude(latitude, this.mercatorCanvas.height);
+    const sourceYLookup = this.projectionSourceYLookup;
 
+    if (!sourceYLookup) {
+      throw new Error("Projection source lookup is not available");
+    }
+
+    for (let y = startRow; y < endRow; y += 1) {
       outputContext.drawImage(
         this.mercatorCanvas,
         0,
-        sourceY,
+        sourceYLookup[y],
         this.mercatorCanvas.width,
         1,
         0,
@@ -385,52 +422,141 @@ export class TiledImageryLayer extends Layer {
 
     this.projectionFrameId = window.requestAnimationFrame(() => {
       this.projectionFrameId = null;
-      const outputContext = this.outputCanvas.getContext("2d");
+      void this.processProjectionFrame().catch(() => {
+        this.resolveProjectionPromises();
+      });
+    });
+  }
 
-      if (!outputContext) {
-        throw new Error("Output canvas context is not available");
+  private async processProjectionFrame(): Promise<void> {
+    await this.ensureProjectionSourceYLookup();
+
+    if (!this.activeProjectionRange) {
+      const nextRange = this.dirtyProjectionRanges.shift();
+
+      if (!nextRange) {
+        this.resolveProjectionPromises();
+        return;
       }
 
-      if (!this.activeProjectionRange) {
-        const nextRange = this.dirtyProjectionRanges.shift();
+      this.activeProjectionRange = {
+        start: nextRange.start,
+        end: nextRange.end,
+        cursor: nextRange.start
+      };
+    }
 
-        if (!nextRange) {
-          this.resolveProjectionPromises();
+    const activeRange = this.activeProjectionRange;
+    const endRow = Math.min(
+      activeRange.end,
+      activeRange.cursor + this.projectionRowsPerFrame
+    );
+    this.projectMercatorToEquirectangular(activeRange.cursor, endRow);
+    activeRange.cursor = endRow;
+
+    if (activeRange.cursor < activeRange.end) {
+      this.requestProjectionFrame();
+      return;
+    }
+
+    this.activeProjectionRange = null;
+    this.hasProjectedOnce = true;
+
+    if (this.dirtyProjectionRanges.length > 0) {
+      this.requestProjectionFrame();
+      return;
+    }
+
+    this.texture.needsUpdate = true;
+    this.context?.requestRender?.();
+    this.resolveProjectionPromises();
+  }
+
+  private async ensureProjectionSourceYLookup(): Promise<Float32Array> {
+    if (this.projectionSourceYLookup) {
+      return this.projectionSourceYLookup;
+    }
+
+    if (this.projectionSourceYLookupPromise) {
+      return await this.projectionSourceYLookupPromise;
+    }
+
+    const fallbackLookup = (): Float32Array => {
+      const lookup = new Float32Array(this.outputCanvas.height);
+
+      for (let row = 0; row < lookup.length; row += 1) {
+        const latitude = 90 - ((row + 0.5) / this.outputCanvas.height) * 180;
+        lookup[row] = mercatorYFromLatitude(latitude, this.mercatorCanvas.height);
+      }
+
+      return lookup;
+    };
+
+    if (!this.projectionLookupWorker) {
+      this.projectionSourceYLookup = fallbackLookup();
+      return this.projectionSourceYLookup;
+    }
+
+    const requestId = this.projectionLookupRequestId;
+    this.projectionLookupRequestId += 1;
+    const request: ProjectionRowLookupWorkerRequest = {
+      id: requestId,
+      outputHeight: this.outputCanvas.height,
+      mercatorHeight: this.mercatorCanvas.height
+    };
+
+    this.projectionSourceYLookupPromise = new Promise<Float32Array>((resolve, reject) => {
+      this.projectionLookupPending.set(requestId, { resolve, reject });
+      this.projectionLookupWorker?.postMessage(request);
+    }).catch(() => fallbackLookup()).finally(() => {
+      this.projectionSourceYLookupPromise = null;
+    });
+
+    const lookup = await this.projectionSourceYLookupPromise;
+    this.projectionSourceYLookup = lookup;
+    return lookup;
+  }
+
+  private createProjectionLookupWorker(): Worker | null {
+    if (typeof Worker !== "function") {
+      return null;
+    }
+
+    try {
+      const worker = new Worker(new URL("../workers/mercatorProjectionLookupWorker.ts", import.meta.url), {
+        type: "module"
+      });
+
+      worker.onmessage = (event: MessageEvent<ProjectionRowLookupWorkerResponse>) => {
+        const pending = this.projectionLookupPending.get(event.data.id);
+
+        if (!pending) {
           return;
         }
 
-        this.activeProjectionRange = {
-          start: nextRange.start,
-          end: nextRange.end,
-          cursor: nextRange.start
-        };
-      }
+        this.projectionLookupPending.delete(event.data.id);
+        pending.resolve(new Float32Array(event.data.buffer));
+      };
 
-      const activeRange = this.activeProjectionRange;
-      const endRow = Math.min(
-        activeRange.end,
-        activeRange.cursor + this.projectionRowsPerFrame
-      );
-      this.projectMercatorToEquirectangular(activeRange.cursor, endRow);
-      activeRange.cursor = endRow;
+      worker.onerror = (event) => {
+        const error = event.error ?? new Error(event.message);
 
-      if (activeRange.cursor < activeRange.end) {
-        this.requestProjectionFrame();
-        return;
-      }
+        for (const pending of this.projectionLookupPending.values()) {
+          pending.reject(error);
+        }
 
-      this.activeProjectionRange = null;
-      this.hasProjectedOnce = true;
+        this.projectionLookupPending.clear();
+        worker.terminate();
 
-      if (this.dirtyProjectionRanges.length > 0) {
-        this.requestProjectionFrame();
-        return;
-      }
+        if (this.projectionLookupWorker === worker) {
+          this.projectionLookupWorker = null;
+        }
+      };
 
-      this.texture.needsUpdate = true;
-      this.context?.requestRender?.();
-      this.resolveProjectionPromises();
-    });
+      return worker;
+    } catch {
+      return null;
+    }
   }
 
   private flushProjection(): Promise<void> {

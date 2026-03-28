@@ -1,3 +1,5 @@
+export {};
+
 interface TerrariumDecodeWorkerRequest {
   id: number;
   width: number;

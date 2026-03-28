@@ -261,3 +261,23 @@
   - `npm run typecheck` -> 通过
   - `npm run test:run -- tests/layers/TiledImageryLayer.test.ts` -> 通过（9/9，含 dirty-row 回归）
   - `npm run test:run` -> 仅 `tests/examples/basic-globe.test.ts` 失败，原因是 demo 中临时注释 `baseElevation/surfaceTiles` 导致 `addLayer` 次数断言不匹配
+
+## 8) 2026-03-28 阶段记录（第六阶段性能：worker 化）
+
+- 本阶段目标：
+  - 执行“重投影与 DEM 解码 worker 化”，进一步降低高缩放主线程占用。
+- 本阶段已完成：
+  - `TiledImageryLayer` 新增重投影行查找 worker：`mercatorProjectionLookupWorker`。
+  - 重投影流程优先使用 worker 产出的 `sourceY` 查找表，worker 不可用时自动回退主线程计算。
+  - `ElevationLayer` 接入 `TerrariumDecoder`，全局高程采样缓冲优先走 worker 解码，失败自动回退主线程。
+  - worker 文件转为模块作用域（`export {}`），修复 typecheck 下多 worker 全局变量冲突。
+- 阶段结论：
+  - 第六阶段“worker 化”子项已落地：重投影与 DEM 解码都具备 worker 优先 + 主线程回退双路径。
+  - 当前全量测试仍有 1 个已知失败，与本阶段无关（`basic-globe` 示例中的临时注释导致断言不匹配）。
+- 本阶段验证：
+  - `npm run test:run -- tests/layers/TiledImageryLayer.test.ts tests/layers/ElevationLayer.test.ts` -> 通过（10/10）
+  - `npm run typecheck` -> 通过
+  - `npm run build` -> 通过（仅保留既有 bundle 体积告警）
+  - `npm run test:run` -> 仅 `tests/examples/basic-globe.test.ts` 失败（已知原因同上）
+- 下一步（唯一）：
+  - 继续第六阶段剩余项：混合 LOD 四叉树与高缩放缝隙联合治理（含性能回归基线）。
