@@ -541,4 +541,82 @@ describe("SurfaceTileLayer", () => {
     expect(uvArray[0]).toBeCloseTo(inset, 6);
     expect(uvArray[1]).toBeCloseTo(1 - inset, 6);
   });
+
+  it("offsets vertex positions when coordTransform is provided", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const noTransformScene = new Scene();
+    const noTransformGlobe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    const sharedOptions = {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 1,
+      elevationExaggeration: 0,
+      skirtDepthMeters: 0,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      }),
+      loadImageryTile: async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(0)
+    };
+
+    const noTransformLayer = new SurfaceTileLayer("no-transform", sharedOptions);
+    noTransformLayer.onAdd({
+      scene: noTransformScene,
+      camera,
+      globe: noTransformGlobe,
+      radius: 1,
+      rendererElement
+    });
+    await noTransformLayer.ready();
+
+    const shift = 0.01; // ~1km offset in degrees
+    const transformLayer = new SurfaceTileLayer("with-transform", {
+      ...sharedOptions,
+      coordTransform: (lng, lat) => ({ lng: lng + shift, lat: lat + shift })
+    });
+    const transformScene = new Scene();
+    transformLayer.onAdd({
+      scene: transformScene,
+      camera,
+      globe: new GlobeMesh({ radius: 1 }),
+      radius: 1,
+      rendererElement
+    });
+    await transformLayer.ready();
+
+    const getPositions = (scene: Scene, id: string) => {
+      const group = scene.getObjectByName(id);
+      const mesh = group?.children[0] as Mesh | undefined;
+      return mesh?.geometry.getAttribute("position").array as Float32Array | undefined;
+    };
+
+    const noTransformPos = getPositions(noTransformScene, "no-transform");
+    const transformPos = getPositions(transformScene, "with-transform");
+
+    expect(noTransformPos).toBeDefined();
+    expect(transformPos).toBeDefined();
+
+    if (!noTransformPos || !transformPos) {
+      return;
+    }
+
+    // Positions should differ because coordTransform shifts lng/lat
+    expect(transformPos[0]).not.toBeCloseTo(noTransformPos[0], 5);
+    // UVs should remain the same (coordTransform does not affect UVs)
+    const noTransformUv = (noTransformScene.getObjectByName("no-transform")
+      ?.children[0] as Mesh | undefined)?.geometry.getAttribute("uv").array as Float32Array | undefined;
+    const transformUv = (transformScene.getObjectByName("with-transform")
+      ?.children[0] as Mesh | undefined)?.geometry.getAttribute("uv").array as Float32Array | undefined;
+    if (noTransformUv && transformUv) {
+      expect(transformUv[0]).toBeCloseTo(noTransformUv[0], 6);
+      expect(transformUv[1]).toBeCloseTo(noTransformUv[1], 6);
+    }
+  });
 });

@@ -42,7 +42,11 @@ class StaleSurfaceTileError extends Error {
   }
 }
 
-interface SurfaceTileLayerOptions {
+export interface CoordTransformFn {
+  (lng: number, lat: number): { lng: number; lat: number };
+}
+
+export interface SurfaceTileLayerOptions {
   minZoom?: number;
   maxZoom?: number;
   tileSize?: number;
@@ -58,6 +62,7 @@ interface SurfaceTileLayerOptions {
   selectTiles?: (options: SurfaceTileSelectionOptions) => SurfaceTileSelection;
   loadImageryTile?: (coordinate: TileCoordinate) => Promise<TileSource>;
   loadElevationTile?: (coordinate: TileCoordinate) => Promise<ElevationTileData>;
+  coordTransform?: CoordTransformFn;
 }
 
 interface TileSkirtMask {
@@ -260,7 +265,8 @@ function buildSurfaceTileGeometry(
   elevationExaggeration: number,
   skirtDepthMeters: number,
   textureUvInset: number,
-  skirtMask: TileSkirtMask
+  skirtMask: TileSkirtMask,
+  coordTransform?: CoordTransformFn
 ): BufferGeometry {
   const { west, east, south, north } = getSurfaceTileBounds(coordinate);
   const positions: number[] = [];
@@ -273,13 +279,21 @@ function buildSurfaceTileGeometry(
 
     for (let column = 0; column <= meshSegments; column += 1) {
       const u = column / meshSegments;
-      const lng = west + (east - west) * u;
+      let lng = west + (east - west) * u;
+      let latOut = lat;
       const heightMeters = elevationTile ? sampleElevation(elevationTile, u, v) : 0;
       const height = (heightMeters / WGS84_RADIUS) * radius * elevationExaggeration;
+
+      if (coordTransform) {
+        const transformed = coordTransform(lng, latOut);
+        lng = transformed.lng;
+        latOut = transformed.lat;
+      }
+
       const cartesian = cartographicToCartesian(
         {
           lng,
-          lat,
+          lat: latOut,
           height
         },
         radius
@@ -343,6 +357,7 @@ export class SurfaceTileLayer extends Layer {
   private readonly textureUvInsetPixels: number;
   private readonly elevationExaggeration: number;
   private readonly zoomExaggerationBoost: number;
+  private readonly coordTransform?: CoordTransformFn;
   private readonly selectTiles;
   private readonly imageryCache: TileCache<TileSource>;
   private readonly elevationCache: TileCache<ElevationTileData>;
@@ -366,6 +381,7 @@ export class SurfaceTileLayer extends Layer {
     this.textureUvInsetPixels = options.textureUvInsetPixels ?? 0.5;
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
     this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
+    this.coordTransform = options.coordTransform;
     this.selectTiles = options.selectTiles ?? selectSurfaceTileCoordinates;
     this.imageryCache = new TileCache<TileSource>(options.cacheSize ?? 96);
     this.elevationCache = new TileCache<ElevationTileData>(options.cacheSize ?? 96);
@@ -588,7 +604,8 @@ export class SurfaceTileLayer extends Layer {
       elevationExaggeration,
       this.skirtDepthMeters,
       computeTextureUvInset(imagery, this.textureUvInsetPixels),
-      skirtMask
+      skirtMask,
+      this.coordTransform
     );
     const texture = createTexture(imagery);
     const material = new MeshStandardMaterial({

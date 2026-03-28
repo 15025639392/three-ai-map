@@ -1,23 +1,36 @@
-const { runBasicGlobe } = vi.hoisted(() => ({
-  runBasicGlobe: vi.fn()
-}));
+import * as main from "../src/main";
 
-vi.mock("../examples/basic-globe", () => ({
-  runBasicGlobe
-}));
+describe("index page", () => {
+  beforeEach(() => {
+    document.body.innerHTML = `<div id="app"></div>`;
+  });
 
-import { mountApp } from "../src/main";
+  it("renders the demos list with all demo cards", () => {
+    main.render();
 
-describe("mountApp", () => {
-  it("renders the scaffold headline", async () => {
-    const container = document.createElement("div");
+    const app = document.querySelector<HTMLDivElement>("#app");
+    expect(app).not.toBeNull();
+    expect(app?.textContent).toContain("Demos");
+    expect(app?.textContent).toContain("Basic Globe");
+    expect(app?.textContent).toContain("Gaode Satellite");
+    expect(app?.textContent).toContain("Baidu Satellite");
 
-    await mountApp(container);
+    const links = app?.querySelectorAll<HTMLAnchorElement>(".demo-card");
+    expect(links?.length).toBeGreaterThanOrEqual(5);
+  });
 
-    expect(container.textContent).toContain("Globe Engine Demo");
-    expect(container.querySelector("main")).not.toBeNull();
-    expect(container.querySelector(".city-list")).not.toBeNull();
-    expect(container.querySelector(".route-list")).not.toBeNull();
-    expect(runBasicGlobe).toHaveBeenCalledTimes(1);
+  it("each demo card links to its own page", () => {
+    main.render();
+
+    const app = document.querySelector<HTMLDivElement>("#app");
+    const cards = app?.querySelectorAll<HTMLAnchorElement>(".demo-card");
+
+    expect(cards).toBeDefined();
+    expect(cards!.length).toBe(5);
+
+    const hrefs = Array.from(cards!).map((c) => c.href);
+    expect(hrefs.some((h) => h.includes("basic-globe"))).toBe(true);
+    expect(hrefs.some((h) => h.includes("gaode-satellite"))).toBe(true);
+    expect(hrefs.some((h) => h.includes("baidu-satellite"))).toBe(true);
   });
 });

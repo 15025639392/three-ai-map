@@ -12,6 +12,7 @@
 | 4 | P0 | VectorTileLayer MVT 解析未实现 | 开放 |
 | 5 | P2 | tileLoader 无 AbortController 支持 | 开放 |
 | 6 | P2 | TileCache 无 TTL 过期机制 | 开放 |
+| 7 | P1 | 高德/百度瓦片无法叠加高程（坐标系偏移） | **已解决** — 新增 `coordTransform` 回调选项 |
 
 ---
 
@@ -191,3 +192,19 @@ export interface TileCacheOptions<TValue = unknown> {
 ```
 
 `get()` 时检查 `createdAt + ttlMs < Date.now()`，过期条目视为 miss 并触发 `onEvict`。对静态底图（如 OSM）可不设 TTL，对动态数据源（如天气、交通）设置 5-15 分钟 TTL。
+
+---
+
+## 7. 高德/百度瓦片无法叠加高程 (P1)
+
+### 问题描述
+
+`SurfaceTileLayer` 的几何体顶点基于 WGS-84 坐标系，而高德影像使用 GCJ-02、百度影像使用 BD-09 坐标系。两者之间存在 100-500m 的水平偏移（中国境内）。若同时启用高程，影像和立体地形不重合，视觉效果不可接受。
+
+当前示例中高德/百度均通过设置 `elevationExaggeration: 0` 规避了此问题。
+
+### 推荐方案
+
+为 `SurfaceTileLayerOptions` 新增 `coordTransform` 回调，在构建几何体顶点时将 WGS-84 坐标转换为影像坐标系。已有 `wgs84ToGcj02`、`wgs84ToBd09` 等转换函数可直接复用。
+
+改动量约 20-30 行，详见 `docs/plans/gcj02-bd09-elevation-support.md`。

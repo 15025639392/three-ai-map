@@ -18,6 +18,7 @@ export { ImageryLayer } from "./layers/ImageryLayer";
 // Tile Layers
 export { ElevationLayer } from "./layers/ElevationLayer";
 export { SurfaceTileLayer } from "./layers/SurfaceTileLayer";
+export type { CoordTransformFn, SurfaceTileLayerOptions } from "./layers/SurfaceTileLayer";
 
 // Advanced Layers
 export { VectorTileLayer } from "./layers/VectorTileLayer";
@@ -33,6 +34,7 @@ export { pointInPolygon, distanceToLine, bearing } from "./spatial/Relation";
 export {
   wgs84ToGcj02,
   gcj02ToWgs84,
+  wgs84ToBd09,
   gcj02ToBd09,
   bd09ToGcj02
 } from "./spatial/CoordinateTransform";
