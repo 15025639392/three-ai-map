@@ -1,3 +1,4 @@
+import type { PerspectiveCamera, WebGLRenderer } from 'three';
 import { Layer } from './Layer';
 
 export interface CustomLayerOptions {
@@ -13,8 +14,8 @@ export interface CustomLayerOptions {
 export interface RenderContext {
   time: number;
   delta: number;
-  camera: any;
-  renderer: any;
+  camera: PerspectiveCamera | null;
+  renderer: WebGLRenderer | null;
 }
 
 export interface UpdateContext {
@@ -22,23 +23,23 @@ export interface UpdateContext {
   delta: number;
 }
 
-export interface CustomEvent {
+export interface CustomEvent<T = unknown> {
   type: string;
-  data?: any;
+  data?: T;
 }
 
-export class CustomLayer extends Layer {
+export class CustomLayer<T = unknown> extends Layer {
   private renderCallback?: (context: RenderContext) => boolean;
   private updateCallback?: (context: UpdateContext) => boolean;
-  private eventCallback?: (event: CustomEvent) => boolean;
+  private eventCallback?: (event: CustomEvent<T>) => boolean;
   private disposeCallback?: () => void;
-  private customData: any = undefined;
+  private customData: T | undefined = undefined;
   private _visible: boolean;
   private _zIndex: number;
-  
+
   constructor(options: CustomLayerOptions) {
     super(options.id);
-    
+
     this.renderCallback = options.render;
     this.updateCallback = options.update;
     this.eventCallback = options.onEvent;
@@ -46,30 +47,30 @@ export class CustomLayer extends Layer {
     this._visible = options.visible ?? true;
     this._zIndex = options.zIndex ?? 0;
   }
-  
+
   render(context: RenderContext): boolean {
     if (!this._visible) return false;
     if (!this.renderCallback) return true;
     return this.renderCallback(context);
   }
 
-  override update(_deltaTime: number, _context: any): void {
+  override update(_deltaTime: number, _context: unknown): void {
     if (!this._visible) return;
     if (!this.updateCallback) return;
     // Note: CustomLayer uses simplified UpdateContext, ignoring base LayerContext
     this.updateCallback({ time: 0, delta: _deltaTime });
   }
-  
-  handleEvent(event: CustomEvent): boolean {
+
+  handleEvent(event: CustomEvent<T>): boolean {
     if (!this.eventCallback) return false;
     return this.eventCallback(event);
   }
-  
-  setData(data: any): void {
+
+  setData(data: T): void {
     this.customData = data;
   }
-  
-  getData(): any {
+
+  getData(): T | undefined {
     return this.customData;
   }
   

@@ -2,17 +2,17 @@ import { Layer } from './Layer';
 import { Coordinate } from '../spatial/SpatialMath';
 import { SpatialIndex, SpatialIndexItem } from '../spatial/SpatialIndex';
 
-export interface ClusterItem {
+export interface ClusterItem<T = unknown> {
   id: string;
   position: Coordinate;
-  data?: any;
+  data?: T;
 }
 
-export interface Cluster {
+export interface Cluster<T = unknown> {
   id: string;
   position: Coordinate;
   size: number;
-  items: ClusterItem[];
+  items: ClusterItem<T>[];
 }
 
 export interface ClusterLayerOptions {
@@ -25,9 +25,9 @@ export interface ClusterOptions {
   zoom?: number;
 }
 
-export class ClusterLayer extends Layer {
-  private items: Map<string, ClusterItem> = new Map();
-  private spatialIndex: SpatialIndex<ClusterItem> = new SpatialIndex();
+export class ClusterLayer<T = unknown> extends Layer {
+  private items: Map<string, ClusterItem<T>> = new Map();
+  private spatialIndex: SpatialIndex<ClusterItem<T>> = new SpatialIndex();
   private clusterRadius: number;
   private minClusterSize: number;
   private maxZoom: number;
@@ -41,9 +41,9 @@ export class ClusterLayer extends Layer {
     this.maxZoom = options.maxZoom ?? 18;
   }
   
-  addItem(item: ClusterItem): void {
+  addItem(item: ClusterItem<T>): void {
     this.items.set(item.id, item);
-    
+
     // Add to spatial index
     const bounds = this.createBounds(item.position, this.clusterRadius);
     this.spatialIndex.insert({
@@ -52,34 +52,34 @@ export class ClusterLayer extends Layer {
       data: item
     });
   }
-  
+
   removeItem(id: string): void {
     this.items.delete(id);
     this.spatialIndex.remove(id);
   }
-  
+
   getItemCount(): number {
     return this.items.size;
   }
-  
-  getClusters(options: ClusterOptions = {}): Cluster[] {
+
+  getClusters(options: ClusterOptions = {}): Cluster<T>[] {
     const zoom = options.zoom ?? 10;
-    const clusters: Cluster[] = [];
+    const clusters: Cluster<T>[] = [];
     const processed = new Set<string>();
-    
+
     // Adjust cluster radius based on zoom
     const adjustedRadius = this.clusterRadius / Math.pow(2, Math.max(0, zoom - 10));
-    
+
     for (const [id, item] of this.items) {
       if (processed.has(id)) continue;
-      
+
       // Find nearby items
       const nearbyBounds = this.createBounds(item.position, adjustedRadius);
       const nearbyItems = this.spatialIndex.queryBounds(nearbyBounds);
-      
+
       if (nearbyItems.length >= this.minClusterSize) {
         // Create cluster
-        const clusterItems: ClusterItem[] = [];
+        const clusterItems: ClusterItem<T>[] = [];
         let sumLng = 0;
         let sumLat = 0;
         
@@ -92,7 +92,7 @@ export class ClusterLayer extends Layer {
           }
         }
         
-        const cluster: Cluster = {
+        const cluster: Cluster<T> = {
           id: `cluster-${this.nextId++}`,
           position: {
             lng: sumLng / clusterItems.length,
