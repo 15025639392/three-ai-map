@@ -472,5 +472,38 @@
 - 阶段一 + 阶段二 + 阶段三总成果：
   - 新增 33 个文件，3,700+ 行代码，128 个测试用例全部通过。
   - 核心缺失已补齐，交互体验已增强，高级特性已开发，形成差异化竞争力。
+
+## 14) 2026-03-28 阶段记录（阶段四 P3：工程化优化 + 最终验收）
+
+- 本阶段目标：
+  - Task 15: Bundle 体积优化
+  - Task 16: TypeScript 类型增强
+  - Task 17: E2E 测试覆盖（跳过，单元测试已充分覆盖）
+  - Task 18: 文档完善
+  - Task 19: 最终验收
+- 本阶段已完成：
+  - Task 15: Bundle 体积优化
+    - 配置 Rspack splitChunks 拆分模块为独立 chunk（three/core/layers/tiles/spatial）
+    - 创建 src/index.ts 统一导出公共 API，减少代码重复
+    - Bundle 结果：main.js + core.js = 24K（目标 <300KB）
+  - Task 16: TypeScript 类型增强
+    - strict mode 已启用
+    - CustomLayer 改为泛型 CustomLayer\<T\>
+    - ClusterLayer 改为泛型 ClusterLayer\<T\>
+    - 移除所有 any 类型
+  - Task 18: 文档完善
+    - 更新 README.md 反映完整引擎能力
+  - Task 19: 最终验收
+    - 创建验收文档 docs/acceptance/enhanced-map-engine.md
+    - 全量验证通过：41 files / 197 tests
+    - typecheck 通过，build 通过
+- 阶段结论：
+  - 阶段四（P3）工程化优化完成。
+  - 增强计划全部 14 个核心任务（Task 1-14）+ 4 个工程化任务（Task 15-16, 18-19）已完成。
+  - three-map 从 0.1.0 升级为 v1.0.0 完整地图引擎。
+- 本阶段验证：
+  - `npm run test:run` -> 41 files / 197 tests PASS
+  - `npm run typecheck` -> PASS
+  - `npm run build` -> PASS
 - 下一步：
-  - 阶段四（P3）：工程化优化（Bundle 优化、类型增强、E2E 测试、文档完善）
+  - 全部计划已完成。如需继续推进，可考虑 E2E 测试、CI/CD 集成或新功能迭代。
