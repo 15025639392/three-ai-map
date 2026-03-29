@@ -57,14 +57,13 @@ describe("GlobeEngine", () => {
     engine.destroy();
   });
 
-  it("mirrors the display canvas when requested", () => {
+  it("mirrors the display canvas by default", () => {
     const container = document.createElement("div");
     Object.defineProperty(container, "clientWidth", { value: 800 });
     Object.defineProperty(container, "clientHeight", { value: 600 });
 
     const engine = new GlobeEngine({
       container,
-      mirrorDisplayX: true,
       rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
     });
 
@@ -75,28 +74,46 @@ describe("GlobeEngine", () => {
     engine.destroy();
   });
 
-  it("mirrors globe picks in screen space when display mirroring is enabled", () => {
+  it("can disable display mirroring", () => {
     const container = document.createElement("div");
     Object.defineProperty(container, "clientWidth", { value: 800 });
     Object.defineProperty(container, "clientHeight", { value: 600 });
-    const mirroredContainer = document.createElement("div");
-    Object.defineProperty(mirroredContainer, "clientWidth", { value: 800 });
-    Object.defineProperty(mirroredContainer, "clientHeight", { value: 600 });
 
     const engine = new GlobeEngine({
       container,
-      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
-    });
-    const mirroredEngine = new GlobeEngine({
-      container: mirroredContainer,
-      mirrorDisplayX: true,
+      mirrorDisplayX: false,
       rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
     });
 
-    engine.setView({ lng: 0, lat: 0, altitude: 2 });
+    const canvas = container.querySelector("canvas");
+    expect(canvas?.style.transform).toBe("");
+    expect(canvas?.style.transformOrigin).toBe("");
+
+    engine.destroy();
+  });
+
+  it("maps globe picks to mirrored visual coords by default", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+    const unmirroredContainer = document.createElement("div");
+    Object.defineProperty(unmirroredContainer, "clientWidth", { value: 800 });
+    Object.defineProperty(unmirroredContainer, "clientHeight", { value: 600 });
+
+    const mirroredEngine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+    const engine = new GlobeEngine({
+      container: unmirroredContainer,
+      mirrorDisplayX: false,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+
     mirroredEngine.setView({ lng: 0, lat: 0, altitude: 2 });
-    engine.render();
+    engine.setView({ lng: 0, lat: 0, altitude: 2 });
     mirroredEngine.render();
+    engine.render();
 
     const normalRightPick = engine.pick(75, 50);
     const mirroredLeftPick = mirroredEngine.pick(25, 50);
@@ -112,8 +129,8 @@ describe("GlobeEngine", () => {
     expect(mirroredLeftPick.cartographic.lng).toBeCloseTo(normalRightPick.cartographic.lng, 6);
     expect(mirroredLeftPick.cartographic.lat).toBeCloseTo(normalRightPick.cartographic.lat, 6);
 
-    engine.destroy();
     mirroredEngine.destroy();
+    engine.destroy();
   });
 
   it("prefers marker hits when picking through the screen center", () => {

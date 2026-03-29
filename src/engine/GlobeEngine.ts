@@ -85,7 +85,7 @@ export class GlobeEngine {
     radius = 1,
     background = "#03060d",
     showBaseGlobe = true,
-    mirrorDisplayX = false,
+    mirrorDisplayX = true,
     camera,
     recoveryPolicy,
     rendererFactory = createDefaultRenderer
