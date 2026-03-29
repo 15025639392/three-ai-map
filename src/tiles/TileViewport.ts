@@ -41,6 +41,7 @@ interface VisibleTileOptions {
 const SAMPLE_POINTER = new Vector2();
 const SAMPLE_RAYCASTER = new Raycaster();
 const CENTER_POINT = new Vector3();
+const MIN_VISIBLE_DEGREES = 1e-6;
 
 function lngToTileX(lng: number, zoom: number): number {
   return ((normalizeLongitude(lng) + 180) / 360) * 2 ** zoom;
@@ -118,7 +119,7 @@ export function computeTargetZoom({
   );
 
   if (left && right) {
-    const visibleDegrees = Math.max(1, shortestLongitudeDelta(left.lng, right.lng));
+    const visibleDegrees = Math.max(MIN_VISIBLE_DEGREES, shortestLongitudeDelta(left.lng, right.lng));
     const zoom = Math.log2((viewportWidth * 360) / (tileSize * visibleDegrees));
     return Math.max(minZoom, Math.min(maxZoom, Math.round(zoom)));
   }

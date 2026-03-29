@@ -146,6 +146,11 @@ const demos = [
   },
 ];
 
+const standalonePages = [
+  "camera-pinch-regression",
+  "raster-layer-imagery-zoom-regression",
+];
+
 export default defineConfig({
   mode: isProduction ? "production" : "development",
   target: "web",
@@ -158,6 +163,9 @@ export default defineConfig({
           ? `./examples/basic-globe-entry.ts`
           : `./examples/${demo.name}.ts`,
       ])
+    ),
+    ...Object.fromEntries(
+      standalonePages.map((page) => [page, `./examples/${page}.ts`])
     ),
   },
   devtool: isProduction ? false : "source-map",
@@ -254,6 +262,13 @@ export default defineConfig({
         template: `./examples/${demo.name}.html`,
         filename: `${demo.name}.html`,
         chunks: [demo.name],
+      })
+    ),
+    ...standalonePages.map((page) =>
+      new HtmlRspackPlugin({
+        template: `./examples/${page}.html`,
+        filename: `${page}.html`,
+        chunks: [page],
       })
     ),
   ],

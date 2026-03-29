@@ -1,5 +1,5 @@
 import { TileCache } from "../tiles/TileCache";
-import { TileScheduler } from "../tiles/TileScheduler";
+import { TileScheduler, type TileRequestOptions } from "../tiles/TileScheduler";
 import type { TileCoordinate } from "../tiles/TileViewport";
 import { defaultTileLoader, type TileSource } from "../tiles/tileLoader";
 import { pickTileTemplate } from "../tiles/TileUrlPicker";
@@ -66,7 +66,7 @@ export class RasterTileSource implements Source {
     this.context = null;
   }
 
-  request(coordinate: TileCoordinate): Promise<TileSource> {
+  request(coordinate: TileCoordinate, options?: TileRequestOptions): Promise<TileSource> {
     const key = tileKey(coordinate);
     const cached = this.cache.get(key);
 
@@ -74,7 +74,7 @@ export class RasterTileSource implements Source {
       return Promise.resolve(cached);
     }
 
-    return this.scheduler.request(key, coordinate)
+    return this.scheduler.request(key, coordinate, options)
       .then((tile) => {
         this.cache.set(key, tile);
         return tile;
@@ -98,4 +98,3 @@ export class RasterTileSource implements Source {
     this.cache.clear();
   }
 }
-

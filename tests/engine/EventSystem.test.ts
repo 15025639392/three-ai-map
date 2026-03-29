@@ -117,6 +117,7 @@ describe("GlobeEngine event system", () => {
 
     const source = new RasterTileSource("raster", {
       tiles: ["raster://{z}/{x}/{y}"],
+      maxZoom: 0,
       loadTile: async () => {
         throw new Error("imagery failed");
       }
@@ -254,6 +255,7 @@ describe("GlobeEngine event system", () => {
 
     const source = new RasterTileSource("raster", {
       tiles: ["raster://{z}/{x}/{y}"],
+      maxZoom: 0,
       loadTile: async () => {
         attempt += 1;
 
@@ -353,6 +355,7 @@ describe("GlobeEngine event system", () => {
 
       const source = new RasterTileSource("raster", {
         tiles: ["raster://{z}/{x}/{y}"],
+        maxZoom: 0,
         loadTile: async () => {
           attempt += 1;
           throw new Error(`persistent imagery failure ${attempt}`);
