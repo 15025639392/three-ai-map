@@ -12,6 +12,7 @@
     "datasets:oblique:validate": "node scripts/validate-oblique-3dtiles-manifest.mjs",
     "datasets:oblique:download": "node scripts/download-oblique-3dtiles-datasets.mjs",
     "test:datasets:oblique:fault-gates": "node scripts/assert-oblique-3dtiles-failure-gates.mjs",
+    "test:browser:camera-interaction": "npm run build && node scripts/browser-smoke-camera-interaction.mjs",
     "test:browser:surface-tiles": "npm run build && node scripts/browser-smoke-surface-tile-regression.mjs",
     "test:metrics:baseline": "node scripts/assert-map-engine-metrics-baseline.mjs",
     "test:map-engine": "bash scripts/run-map-engine-checks.sh"

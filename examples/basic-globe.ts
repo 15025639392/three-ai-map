@@ -141,6 +141,7 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     container,
     radius: 1,
     showBaseGlobe: true,
+    showInteractionAnchor: true,
     background: "#020611",
   });
 
@@ -282,7 +283,7 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     }
     requestAnimationFrame(perfLoop);
   };
-  requestAnimationFrame(perfLoop);
+  // requestAnimationFrame(perfLoop);
 
   /* ---- expose for devtools ---- */
   if (typeof window !== "undefined") {

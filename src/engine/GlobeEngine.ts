@@ -1,5 +1,6 @@
 import { Raycaster, Vector2 } from "three";
 import { CameraController } from "../core/CameraController";
+import { InteractionAnchorOverlay } from "../core/InteractionAnchorOverlay";
 import { PerformanceMonitor, PerformanceReport } from "../core/PerformanceMonitor";
 import { SceneSystem } from "../core/SceneSystem";
 import { cartesianToCartographic } from "../geo/projection";
@@ -61,6 +62,7 @@ export class GlobeEngine {
   private readonly mirrorDisplayX: boolean;
   private readonly layerManager: LayerManager;
   private readonly sourceManager: SourceManager;
+  private readonly interactionAnchorOverlay: InteractionAnchorOverlay | null;
   private terrainHost: TerrainTileLayer | null = null;
   private readonly showBaseGlobe: boolean;
   private readonly recoveryPolicyDefaults: LayerRecoveryOverrides;
@@ -85,6 +87,7 @@ export class GlobeEngine {
     radius = 1,
     background = "#03060d",
     showBaseGlobe = true,
+    showInteractionAnchor = false,
     mirrorDisplayX = true,
     camera,
     recoveryPolicy,
@@ -103,6 +106,13 @@ export class GlobeEngine {
       container,
       clearColor: background
     });
+    this.rendererSystem.renderer.domElement.style.touchAction = "none";
+    this.rendererSystem.renderer.domElement.style.userSelect = "none";
+    this.rendererSystem.renderer.domElement.style.webkitUserSelect = "none";
+    this.rendererSystem.renderer.domElement.style.setProperty(
+      "-webkit-tap-highlight-color",
+      "transparent"
+    );
     if (this.mirrorDisplayX) {
       this.rendererSystem.renderer.domElement.style.transform = "scaleX(-1)";
       this.rendererSystem.renderer.domElement.style.transformOrigin = "50% 50%";
@@ -142,6 +152,9 @@ export class GlobeEngine {
       mirrorDisplayX: this.mirrorDisplayX,
       onChange: this.handleCameraChange
     });
+    this.interactionAnchorOverlay = showInteractionAnchor
+      ? new InteractionAnchorOverlay(this.container)
+      : null;
 
     this.resize();
     this.setView({ lng: 0, lat: 20, altitude: radius * 2.2 });
@@ -177,6 +190,7 @@ export class GlobeEngine {
       : Math.max(0.0001, now - this.lastRenderTimestamp);
     this.lastRenderTimestamp = now;
     this.cameraController.update();
+    this.interactionAnchorOverlay?.update(this.cameraController.getInteractionDebugState());
     this.sceneSystem.camera.updateMatrixWorld(true);
     this.layerManager.update(0);
     this.rendererSystem.render(this.sceneSystem.scene, this.sceneSystem.camera);
@@ -330,6 +344,7 @@ export class GlobeEngine {
     this.terrainHost = null;
     this.applyBaseGlobeTerrainInset();
     this.cameraController.dispose();
+    this.interactionAnchorOverlay?.destroy();
     this.atmosphere.dispose();
     this.starfield.dispose();
     this.globe.dispose();

@@ -56,8 +56,12 @@ function createTimedMouseEvent(
   return event;
 }
 
-function createTimedWheelEvent(deltaY: number, timeStamp: number): WheelEvent {
-  const event = new WheelEvent("wheel", { deltaY });
+function createTimedWheelEvent(
+  deltaY: number,
+  timeStamp: number,
+  options: WheelEventInit = {}
+): WheelEvent {
+  const event = new WheelEvent("wheel", { deltaY, ...options });
   Object.defineProperty(event, "timeStamp", { value: timeStamp });
   return event;
 }
@@ -249,6 +253,283 @@ describe("CameraController", () => {
     expect(afterTilt).toBeGreaterThan(beforeTilt + 0.05);
   });
 
+  it("zooms around the pinch center and preserves the globe anchor on mobile", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.8 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchstart",
+        [
+          { clientX: anchorPixels.x - 24, clientY: anchorPixels.y },
+          { clientX: anchorPixels.x + 24, clientY: anchorPixels.y }
+        ],
+        100
+      )
+    );
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchmove",
+        [
+          { clientX: anchorPixels.x - 60, clientY: anchorPixels.y },
+          { clientX: anchorPixels.x + 60, clientY: anchorPixels.y }
+        ],
+        116
+      )
+    );
+    controller.update();
+
+    const afterPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    expect(controller.getView().altitude).toBeLessThan(0.8);
+    expect(afterPixels.x).toBeCloseTo(anchorPixels.x, 0);
+    expect(afterPixels.y).toBeCloseTo(anchorPixels.y, 0);
+  });
+
+  it("keeps the pinch anchor stable during touch zoom inertia", () => {
+    const animationFrame = installAnimationFrameMock();
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.8 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchstart",
+        [
+          { clientX: anchorPixels.x - 24, clientY: anchorPixels.y },
+          { clientX: anchorPixels.x + 24, clientY: anchorPixels.y }
+        ],
+        100
+      )
+    );
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchmove",
+        [
+          { clientX: anchorPixels.x - 60, clientY: anchorPixels.y },
+          { clientX: anchorPixels.x + 60, clientY: anchorPixels.y }
+        ],
+        116
+      )
+    );
+    controller.update();
+
+    const altitudeAfterPinch = controller.getView().altitude;
+    element.dispatchEvent(createTimedTouchEvent("touchend", [], 120));
+
+    animationFrame.runFrame(136);
+    controller.update();
+
+    const afterPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    expect(controller.getView().altitude).toBeLessThan(altitudeAfterPinch);
+    expect(afterPixels.x).toBeCloseTo(anchorPixels.x, 0);
+    expect(afterPixels.y).toBeCloseTo(anchorPixels.y, 0);
+
+    animationFrame.restore();
+  });
+
+  it("exposes the active wheel zoom anchor as interaction debug state", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.8 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    element.dispatchEvent(createTimedWheelEvent(-800, 100, {
+      clientX: anchorPixels.x,
+      clientY: anchorPixels.y
+    }));
+
+    const debugState = controller.getInteractionDebugState();
+
+    expect(debugState.visible).toBe(true);
+    expect(debugState.kind).toBe("zoom");
+    expect(debugState.clientX).toBeCloseTo(anchorPixels.x, 10);
+    expect(debugState.clientY).toBeCloseTo(anchorPixels.y, 10);
+    expect(debugState.blendFactor).toBe(0);
+  });
+
+  it("exposes the active pinch center as interaction debug state", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.8 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchstart",
+        [
+          { clientX: anchorPixels.x - 24, clientY: anchorPixels.y },
+          { clientX: anchorPixels.x + 24, clientY: anchorPixels.y }
+        ],
+        100
+      )
+    );
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchmove",
+        [
+          { clientX: anchorPixels.x - 60, clientY: anchorPixels.y },
+          { clientX: anchorPixels.x + 60, clientY: anchorPixels.y }
+        ],
+        116
+      )
+    );
+
+    const debugState = controller.getInteractionDebugState();
+
+    expect(debugState.visible).toBe(true);
+    expect(debugState.kind).toBe("zoom");
+    expect(debugState.clientX).toBeCloseTo(anchorPixels.x, 10);
+    expect(debugState.clientY).toBeCloseTo(anchorPixels.y, 10);
+    expect(debugState.blendFactor).toBe(0);
+  });
+
+  it("keeps pinch inertia gentle enough to avoid snapping to min altitude after one medium gesture", () => {
+    const animationFrame = installAnimationFrameMock();
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.8 });
+    controller.update();
+
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchstart",
+        [
+          { clientX: 176, clientY: 200 },
+          { clientX: 224, clientY: 200 }
+        ],
+        100
+      )
+    );
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchmove",
+        [
+          { clientX: 140, clientY: 200 },
+          { clientX: 260, clientY: 200 }
+        ],
+        116
+      )
+    );
+    controller.update();
+    element.dispatchEvent(createTimedTouchEvent("touchend", [], 120));
+
+    animationFrame.runFrame(136);
+    controller.update();
+
+    expect(controller.getView().altitude).toBeGreaterThan(0.2);
+
+    animationFrame.restore();
+  });
+
   it("resets tilt when setView is called", () => {
     const element = createViewportElement();
     const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
@@ -329,6 +610,41 @@ describe("CameraController", () => {
     animationFrame.restore();
   });
 
+  it("smooths drag velocity across a brief reverse jitter before release", () => {
+    const animationFrame = installAnimationFrameMock();
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+
+    controller.setView({ lng: 0, lat: 0, altitude: 2 });
+    controller.update();
+
+    const trackedPoint = getFrontSurfacePoint(camera);
+
+    element.dispatchEvent(createTimedMouseEvent("mousedown", 200, 200, 100));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", 260, 140, 132));
+    controller.update();
+    window.dispatchEvent(createTimedMouseEvent("mousemove", 250, 150, 148));
+    controller.update();
+
+    const releasedPixels = projectPointToPixels(camera, trackedPoint, 400, 400);
+    window.dispatchEvent(createTimedMouseEvent("mouseup", 250, 150, 152));
+
+    animationFrame.runFrame(168);
+    controller.update();
+
+    const afterInertiaPixels = projectPointToPixels(camera, trackedPoint, 400, 400);
+
+    expect(afterInertiaPixels.x).toBeGreaterThan(releasedPixels.x);
+    expect(afterInertiaPixels.y).toBeLessThan(releasedPixels.y);
+
+    animationFrame.restore();
+  });
+
   it("zooms out on wheel-down and zooms in on wheel-up", () => {
     const element = createViewportElement();
     const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
@@ -394,6 +710,103 @@ describe("CameraController", () => {
     animationFrame.runFrame(116);
 
     expect(controller.getView().altitude).toBeGreaterThan(altitudeAfterWheel);
+
+    animationFrame.restore();
+  });
+
+  it("keeps the zoom anchor under the wheel pointer", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.8 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    element.dispatchEvent(createTimedWheelEvent(-800, 100, {
+      clientX: anchorPixels.x,
+      clientY: anchorPixels.y
+    }));
+    controller.update();
+
+    const afterPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    expect(controller.getView().altitude).toBeLessThan(0.8);
+    expect(afterPixels.x).toBeCloseTo(anchorPixels.x, 0);
+    expect(afterPixels.y).toBeCloseTo(anchorPixels.y, 0);
+  });
+
+  it("keeps the zoom anchor stable during zoom inertia", () => {
+    const animationFrame = installAnimationFrameMock();
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      minAltitude: 0.2
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 0.8 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+    element.dispatchEvent(createTimedWheelEvent(-800, 100, {
+      clientX: anchorPixels.x,
+      clientY: anchorPixels.y
+    }));
+    const altitudeAfterWheel = controller.getView().altitude;
+
+    animationFrame.runFrame(116);
+    controller.update();
+
+    const afterPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    expect(controller.getView().altitude).toBeLessThan(altitudeAfterWheel);
+    expect(afterPixels.x).toBeCloseTo(anchorPixels.x, 0);
+    expect(afterPixels.y).toBeCloseTo(anchorPixels.y, 0);
 
     animationFrame.restore();
   });
@@ -506,6 +919,131 @@ describe("CameraController", () => {
 
     expect(draggedAnchorPixels.x).toBeCloseTo(nextPointer.x, 0);
     expect(draggedAnchorPixels.y).toBeCloseTo(nextPointer.y, 0);
+  });
+
+  it("exposes a much stronger pan anchor blend at low altitude than at high altitude", () => {
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    const lowElement = createViewportElement();
+    const lowCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const lowController = new CameraController({
+      camera: lowCamera,
+      element: lowElement,
+      globeRadius: 1
+    });
+
+    lowController.setView({ lng: 110, lat: 18, altitude: 0.3 });
+    lowController.update();
+
+    const lowAnchorPixels = projectPointToPixels(
+      lowCamera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    lowElement.dispatchEvent(createTimedMouseEvent("mousedown", lowAnchorPixels.x, lowAnchorPixels.y, 100));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", lowAnchorPixels.x + 24, lowAnchorPixels.y - 18, 116));
+
+    const lowState = lowController.getInteractionDebugState();
+
+    window.dispatchEvent(createTimedMouseEvent("mouseup", lowAnchorPixels.x + 24, lowAnchorPixels.y - 18, 120));
+    lowController.dispose();
+
+    const highElement = createViewportElement();
+    const highCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const highController = new CameraController({
+      camera: highCamera,
+      element: highElement,
+      globeRadius: 1
+    });
+
+    highController.setView({ lng: 110, lat: 18, altitude: 4 });
+    highController.update();
+
+    const highAnchorPixels = projectPointToPixels(
+      highCamera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+
+    highElement.dispatchEvent(createTimedMouseEvent("mousedown", highAnchorPixels.x, highAnchorPixels.y, 200));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", highAnchorPixels.x + 24, highAnchorPixels.y - 18, 216));
+
+    const highState = highController.getInteractionDebugState();
+
+    window.dispatchEvent(createTimedMouseEvent("mouseup", highAnchorPixels.x + 24, highAnchorPixels.y - 18, 220));
+    highController.dispose();
+
+    expect(lowState.visible).toBe(true);
+    expect(lowState.kind).toBe("pan");
+    expect(lowState.blendFactor).toBeLessThan(0.2);
+    expect(highState.visible).toBe(true);
+    expect(highState.kind).toBe("pan");
+    expect(highState.blendFactor).toBeGreaterThan(0.8);
+  });
+
+  it("does not keep the original globe anchor perfectly pinned at high altitude", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+    const anchorPoint = cartographicToCartesian(
+      {
+        lng: 120,
+        lat: 20,
+        height: 0
+      },
+      1
+    );
+
+    controller.setView({ lng: 110, lat: 18, altitude: 4 });
+    controller.update();
+
+    const anchorPixels = projectPointToPixels(camera, new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z), 400, 400);
+    const nextPointer = {
+      x: anchorPixels.x + 24,
+      y: anchorPixels.y - 18
+    };
+
+    element.dispatchEvent(
+      new MouseEvent("mousedown", {
+        clientX: anchorPixels.x,
+        clientY: anchorPixels.y
+      })
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", {
+        clientX: nextPointer.x,
+        clientY: nextPointer.y
+      })
+    );
+    window.dispatchEvent(new MouseEvent("mouseup"));
+    controller.update();
+
+    const draggedAnchorPixels = projectPointToPixels(
+      camera,
+      new Vector3(anchorPoint.x, anchorPoint.y, anchorPoint.z),
+      400,
+      400
+    );
+    const anchorPointerDistance = Math.hypot(
+      draggedAnchorPixels.x - nextPointer.x,
+      draggedAnchorPixels.y - nextPointer.y
+    );
+
+    expect(anchorPointerDistance).toBeGreaterThan(4);
   });
 
   it("keeps inertia moving in the same direction after a high-zoom globe-anchor drag", () => {

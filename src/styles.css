@@ -167,6 +167,33 @@ a {
   font-size: 0.85rem;
 }
 
+[data-role="interaction-anchor"] {
+  filter:
+    drop-shadow(0 0 12px color-mix(in srgb, currentColor 40%, transparent))
+    drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+  mix-blend-mode: screen;
+}
+
+[data-role="interaction-anchor"][data-kind="pan"] {
+  color: #54f7ff;
+}
+
+[data-role="interaction-anchor"][data-kind="zoom"] {
+  color: #6aa7ff;
+}
+
+[data-role="interaction-anchor"][data-kind="rotate"] {
+  color: #d38bff;
+}
+
+[data-role="interaction-anchor"][data-kind="tilt"] {
+  color: #9af77a;
+}
+
+[data-role="interaction-anchor"][data-kind="fallback"] {
+  color: #f8c25d;
+}
+
 /* ---- Basic Globe Legacy Layout ---- */
 
 .shell {

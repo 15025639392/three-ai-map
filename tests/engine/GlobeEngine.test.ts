@@ -92,6 +92,54 @@ describe("GlobeEngine", () => {
     engine.destroy();
   });
 
+  it("disables native touch gestures on the renderer canvas", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+
+    const canvas = container.querySelector("canvas");
+    expect(canvas?.style.touchAction).toBe("none");
+    expect(canvas?.style.userSelect).toBe("none");
+    expect(canvas?.style.getPropertyValue("-webkit-tap-highlight-color")).toBe("transparent");
+
+    engine.destroy();
+  });
+
+  it("renders an interaction anchor overlay when enabled", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      showInteractionAnchor: true,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+
+    engine.setView({ lng: 0, lat: 0, altitude: 2 });
+    engine.render();
+
+    const canvas = container.querySelector("canvas");
+    canvas?.dispatchEvent(new WheelEvent("wheel", { clientX: 50, clientY: 50, deltaY: -200 }));
+    engine.render();
+
+    const overlay = container.querySelector<HTMLElement>("[data-role='interaction-anchor']");
+
+    expect(overlay).not.toBeNull();
+    expect(overlay?.hidden).toBe(false);
+    expect(overlay?.dataset.kind).toBe("zoom");
+    expect(overlay?.style.transform).toContain("translate(");
+
+    engine.destroy();
+
+    expect(container.querySelector("[data-role='interaction-anchor']")).toBeNull();
+  });
+
   it("maps globe picks to mirrored visual coords by default", () => {
     const container = document.createElement("div");
     Object.defineProperty(container, "clientWidth", { value: 800 });

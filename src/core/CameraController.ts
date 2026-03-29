@@ -47,8 +47,29 @@ const MIN_TILT_RADIANS = 0;
 const MAX_TILT_RADIANS = (75 * Math.PI) / 180;
 const POINTER_TILT_SPEED = 0.004;
 const TOUCH_TILT_SPEED = 0.004;
+const TOUCH_ZOOM_INERTIA_GAIN = 0.25;
+const PAN_BLEND_START_ALTITUDE_FACTOR = 0.75;
+const PAN_BLEND_END_ALTITUDE_FACTOR = 4.5;
+const ROTATION_VELOCITY_SMOOTHING_WINDOW = 96;
+const MAX_ROTATION_VELOCITY_SAMPLES = 6;
 
 type PointerDragMode = "orbit" | "tilt";
+export type InteractionDebugStateKind = "pan" | "zoom" | "rotate" | "tilt" | "fallback";
+
+export interface InteractionDebugState {
+  visible: boolean;
+  kind: InteractionDebugStateKind;
+  clientX: number;
+  clientY: number;
+  blendFactor: number;
+}
+
+interface RotationVelocitySample {
+  time: number;
+  duration: number;
+  usesGlobeAnchor: boolean;
+  velocity: Vector3;
+}
 
 export class CameraController {
   private readonly camera: PerspectiveCamera;
@@ -58,7 +79,7 @@ export class CameraController {
   private readonly maxAltitude: number;
   private readonly mirrorDisplayX: boolean;
   private readonly onChange?: () => void;
-  private readonly zoomSpeed = 0.0005;
+  private readonly zoomSpeed = 0.0004054651081081644;
   private readonly touchOptions: AddEventListenerOptions = { passive: false };
   private isDragging = false;
   private altitude: number;
@@ -66,10 +87,23 @@ export class CameraController {
   private pointerDragMode: PointerDragMode = "orbit";
   private readonly orbitQuaternion = new Quaternion();
   private readonly dragVector = new Vector3();
+  private readonly dragOrbitVector = new Vector3();
   private readonly rotationVelocity = new Vector3();
+  private readonly rotationVelocitySamples: RotationVelocitySample[] = [];
   private dragUsesGlobeAnchor = false;
   private inertiaUsesGlobeAnchor = false;
   private zoomVelocity = 0;
+  private readonly zoomAnchorVector = new Vector3();
+  private zoomAnchorClientX = 0;
+  private zoomAnchorClientY = 0;
+  private hasZoomAnchor = false;
+  private readonly interactionDebugState: InteractionDebugState = {
+    visible: false,
+    kind: "fallback",
+    clientX: 0,
+    clientY: 0,
+    blendFactor: 0
+  };
   private animationFrameId: number | null = null;
   private previousAnimationTime: number | null = null;
   private lastPointerTime: number | null = null;
@@ -77,6 +111,8 @@ export class CameraController {
   private lastWheelTime: number | null = null;
   private isTouchTilting = false;
   private lastTouchCenterY: number | null = null;
+  private lastTouchDistance: number | null = null;
+  private lastTouchTime: number | null = null;
 
   constructor({
     camera,
@@ -99,7 +135,7 @@ export class CameraController {
     this.element.addEventListener("mousedown", this.handlePointerDown);
     window.addEventListener("mousemove", this.handlePointerMove);
     window.addEventListener("mouseup", this.handlePointerUp);
-    this.element.addEventListener("wheel", this.handleWheel, { passive: true });
+    this.element.addEventListener("wheel", this.handleWheel, { passive: false });
     this.element.addEventListener("touchstart", this.handleTouchStart, this.touchOptions);
     this.element.addEventListener("touchmove", this.handleTouchMove, this.touchOptions);
     this.element.addEventListener("touchend", this.handleTouchEnd, this.touchOptions);
@@ -122,9 +158,10 @@ export class CameraController {
       (view.lat * Math.PI) / 180
     );
     this.orbitQuaternion.setFromEuler(ORBIT_EULER);
-    this.rotationVelocity.set(0, 0, 0);
+    this.clearRotationVelocitySamples();
     this.inertiaUsesGlobeAnchor = false;
     this.zoomVelocity = 0;
+    this.clearZoomAnchor();
     this.stopInertiaLoop();
     this.onChange?.();
   }
@@ -147,6 +184,10 @@ export class CameraController {
       lat: cartographic.lat,
       altitude: this.altitude
     };
+  }
+
+  getInteractionDebugState(): InteractionDebugState {
+    return { ...this.interactionDebugState };
   }
 
   update(): void {
@@ -229,7 +270,9 @@ export class CameraController {
   private handlePointerDown = (event: MouseEvent): void => {
     this.isDragging = true;
     this.pointerDragMode = event.ctrlKey ? "tilt" : "orbit";
-    this.rotationVelocity.set(0, 0, 0);
+    this.clearRotationVelocitySamples();
+    this.zoomVelocity = 0;
+    this.clearZoomAnchor();
     this.lastPointerTime = this.getEventTime(event.timeStamp);
     this.lastPointerClientY = event.clientY;
     this.stopInertiaLoopIfIdle();
@@ -241,17 +284,19 @@ export class CameraController {
     }
 
     const globeAnchor = this.projectPointerToGlobe(event.clientX, event.clientY);
+    this.dragOrbitVector.copy(this.projectPointerToArcball(event.clientX, event.clientY));
 
     if (globeAnchor) {
       this.dragUsesGlobeAnchor = true;
-      this.inertiaUsesGlobeAnchor = true;
+      this.inertiaUsesGlobeAnchor = this.getPanBlendFactor() < 0.5;
       this.dragVector.copy(globeAnchor);
+      this.setInteractionDebugState("pan", event.clientX, event.clientY, this.getPanBlendFactor());
       return;
     }
 
     this.dragUsesGlobeAnchor = false;
     this.inertiaUsesGlobeAnchor = false;
-    this.dragVector.copy(this.projectPointerToArcball(event.clientX, event.clientY));
+    this.setInteractionDebugState("fallback", event.clientX, event.clientY, 1);
   };
 
   private handlePointerMove = (event: MouseEvent): void => {
@@ -274,35 +319,76 @@ export class CameraController {
       return;
     }
 
+    const panBlendFactor = this.getPanBlendFactor();
+    const previousOrientation = this.orbitQuaternion.clone();
+    const currentArcball = this.projectPointerToArcball(event.clientX, event.clientY);
+    const orbitRotation = new Quaternion();
+    orbitRotation.setFromUnitVectors(currentArcball, this.dragOrbitVector);
+
+    const orbitOrientation = previousOrientation.clone().multiply(orbitRotation);
+    let nextOrientation = orbitOrientation;
+    let canUseGlobeAnchor = false;
+
     if (this.dragUsesGlobeAnchor) {
       const currentGlobeAnchor = this.projectPointerToGlobe(event.clientX, event.clientY);
 
-      if (!currentGlobeAnchor) {
-        return;
+      if (currentGlobeAnchor) {
+        DRAG_ROTATION.setFromUnitVectors(currentGlobeAnchor, this.dragVector);
+        const anchorOrientation = previousOrientation.clone().premultiply(DRAG_ROTATION);
+        nextOrientation = anchorOrientation.slerp(orbitOrientation, panBlendFactor);
+        canUseGlobeAnchor = true;
+        this.setInteractionDebugState("pan", event.clientX, event.clientY, panBlendFactor);
+      } else {
+        nextOrientation = orbitOrientation;
+        this.setInteractionDebugState("fallback", event.clientX, event.clientY, 1);
       }
-
-      ARC_BALL_CURRENT.copy(currentGlobeAnchor);
     } else {
-      ARC_BALL_CURRENT.copy(this.projectPointerToArcball(event.clientX, event.clientY));
+      this.setInteractionDebugState("fallback", event.clientX, event.clientY, 1);
     }
 
-    if (ARC_BALL_CURRENT.angleTo(this.dragVector) === 0) {
+    if (nextOrientation.angleTo(previousOrientation) <= Number.EPSILON) {
+      this.dragOrbitVector.copy(currentArcball);
+
+      if (this.dragUsesGlobeAnchor) {
+        const stableGlobeAnchor = this.projectPointerToGlobe(event.clientX, event.clientY);
+
+        if (stableGlobeAnchor) {
+          this.dragVector.copy(stableGlobeAnchor);
+        }
+      }
+
+      this.clearRotationVelocitySamples();
+      this.inertiaUsesGlobeAnchor = false;
+
       return;
     }
 
-    DRAG_ROTATION.setFromUnitVectors(ARC_BALL_CURRENT, this.dragVector);
+    const useGlobeAnchorInertia = canUseGlobeAnchor && panBlendFactor < 0.5;
 
-    if (this.dragUsesGlobeAnchor) {
-      this.orbitQuaternion.premultiply(DRAG_ROTATION);
+    if (useGlobeAnchorInertia) {
+      DRAG_ROTATION.copy(nextOrientation).multiply(previousOrientation.clone().invert());
     } else {
-      this.orbitQuaternion.multiply(DRAG_ROTATION);
+      DRAG_ROTATION.copy(previousOrientation).invert().multiply(nextOrientation);
     }
 
-    this.updateRotationVelocity(DRAG_ROTATION, this.getDeltaTime(this.lastPointerTime, event.timeStamp));
-    this.lastPointerTime = this.getEventTime(event.timeStamp);
+    const sampleTime = this.getEventTime(event.timeStamp);
+    this.orbitQuaternion.copy(nextOrientation);
+    this.inertiaUsesGlobeAnchor = useGlobeAnchorInertia;
+    this.updateRotationVelocity(
+      DRAG_ROTATION,
+      this.getDeltaTime(this.lastPointerTime, event.timeStamp),
+      sampleTime,
+      useGlobeAnchorInertia
+    );
+    this.lastPointerTime = sampleTime;
+    this.dragOrbitVector.copy(currentArcball);
 
-    if (!this.dragUsesGlobeAnchor) {
-      this.dragVector.copy(ARC_BALL_CURRENT);
+    if (this.dragUsesGlobeAnchor) {
+      const nextGlobeAnchor = this.projectPointerToGlobe(event.clientX, event.clientY);
+
+      if (nextGlobeAnchor) {
+        this.dragVector.copy(nextGlobeAnchor);
+      }
     }
 
     this.onChange?.();
@@ -315,6 +401,7 @@ export class CameraController {
     this.dragUsesGlobeAnchor = false;
     this.lastPointerClientY = null;
     this.lastPointerTime = null;
+    this.clearInteractionDebugState();
 
     if (shouldApplyInertia) {
       this.startInertiaLoop();
@@ -322,36 +409,52 @@ export class CameraController {
   };
 
   private handleWheel = (event: WheelEvent): void => {
-    const zoomScale = Math.max(this.altitude, this.globeRadius * 0.00001);
-    const deltaAltitude = event.deltaY * this.zoomSpeed * zoomScale;
-    const nextAltitude = this.clampAltitude(this.altitude + deltaAltitude);
-    const altitudeDelta = nextAltitude - this.altitude;
-    this.altitude = nextAltitude;
-    const deltaTime = this.getDeltaTime(this.lastWheelTime, event.timeStamp);
-    const sampleVelocity = altitudeDelta / deltaTime;
+    const deltaLogAltitude = this.normalizeWheelDelta(event) * this.zoomSpeed;
+    const previousAltitude = this.altitude;
+    this.captureZoomAnchor(event.clientX, event.clientY);
+    const nextAltitude = this.clampAltitude(this.altitude * Math.exp(deltaLogAltitude));
+    const appliedLogDelta = nextAltitude > 0 && previousAltitude > 0
+      ? Math.log(nextAltitude / previousAltitude)
+      : 0;
 
-    if (Math.sign(sampleVelocity) === Math.sign(this.zoomVelocity)) {
-      this.zoomVelocity += sampleVelocity;
-    } else {
-      this.zoomVelocity = sampleVelocity;
-    }
+    this.altitude = nextAltitude;
+    const anchorChanged = this.applyZoomAnchor();
+    const deltaTime = this.getDeltaTime(this.lastWheelTime, event.timeStamp);
+    const sampleVelocity = appliedLogDelta / deltaTime;
+
+    this.updateZoomVelocity(sampleVelocity);
 
     this.lastWheelTime = this.getEventTime(event.timeStamp);
+    if (Math.abs(appliedLogDelta) <= Number.EPSILON) {
+      this.zoomVelocity = 0;
+      this.clearZoomAnchor();
+    }
+
     this.startInertiaLoop();
-    this.onChange?.();
+    if (nextAltitude !== previousAltitude || anchorChanged) {
+      this.onChange?.();
+    }
+    event.preventDefault();
   };
 
   private handleTouchStart = (event: TouchEvent): void => {
     if (event.touches.length !== 2) {
       this.isTouchTilting = false;
       this.lastTouchCenterY = null;
+      this.lastTouchDistance = null;
+      this.lastTouchTime = null;
       return;
     }
 
+    const touchCenter = this.getTouchCenter(event.touches);
     this.isTouchTilting = true;
-    this.lastTouchCenterY = this.getTouchCenterY(event.touches);
-    this.rotationVelocity.set(0, 0, 0);
+    this.lastTouchCenterY = touchCenter.y;
+    this.lastTouchDistance = this.getTouchDistance(event.touches);
+    this.lastTouchTime = this.getEventTime(event.timeStamp);
+    this.clearRotationVelocitySamples();
     this.inertiaUsesGlobeAnchor = false;
+    this.zoomVelocity = 0;
+    this.captureZoomAnchor(touchCenter.x, touchCenter.y);
     this.stopInertiaLoopIfIdle();
     event.preventDefault();
   };
@@ -362,14 +465,49 @@ export class CameraController {
     }
 
     const previousCenterY = this.lastTouchCenterY;
-    const centerY = this.getTouchCenterY(event.touches);
+    const previousDistance = this.lastTouchDistance;
+    const previousTouchTime = this.lastTouchTime;
+    const touchCenter = this.getTouchCenter(event.touches);
+    const centerY = touchCenter.y;
+    const distance = this.getTouchDistance(event.touches);
     this.lastTouchCenterY = centerY;
+    this.lastTouchDistance = distance;
+    this.lastTouchTime = this.getEventTime(event.timeStamp);
 
     if (previousCenterY === null) {
       return;
     }
 
+    let changed = false;
+
+    if (previousDistance !== null && previousDistance > 0 && distance > 0) {
+      this.updateZoomAnchorClient(touchCenter.x, touchCenter.y);
+      const previousAltitude = this.altitude;
+      const nextAltitude = this.clampAltitude(this.altitude * (previousDistance / distance));
+      const appliedLogDelta = nextAltitude > 0 && previousAltitude > 0
+        ? Math.log(nextAltitude / previousAltitude)
+        : 0;
+
+      this.altitude = nextAltitude;
+      const anchorChanged = this.applyZoomAnchor();
+      const deltaTime = this.getDeltaTime(previousTouchTime, event.timeStamp);
+
+      if (Math.abs(appliedLogDelta) > Number.EPSILON) {
+        this.updateZoomVelocity((appliedLogDelta / deltaTime) * TOUCH_ZOOM_INERTIA_GAIN);
+      } else {
+        this.zoomVelocity = 0;
+      }
+
+      changed = nextAltitude !== previousAltitude || anchorChanged;
+    } else {
+      this.zoomVelocity = 0;
+    }
+
     if (this.applyTiltDelta(centerY - previousCenterY, TOUCH_TILT_SPEED)) {
+      changed = true;
+    }
+
+    if (changed) {
       this.onChange?.();
     }
 
@@ -378,13 +516,28 @@ export class CameraController {
 
   private handleTouchEnd = (event: TouchEvent): void => {
     if (event.touches.length === 2) {
-      this.lastTouchCenterY = this.getTouchCenterY(event.touches);
+      const touchCenter = this.getTouchCenter(event.touches);
+      this.lastTouchCenterY = touchCenter.y;
+      this.lastTouchDistance = this.getTouchDistance(event.touches);
+      this.lastTouchTime = this.getEventTime(event.timeStamp);
       this.isTouchTilting = true;
+      this.updateZoomAnchorClient(touchCenter.x, touchCenter.y);
       return;
     }
 
     this.isTouchTilting = false;
     this.lastTouchCenterY = null;
+
+    this.lastTouchDistance = null;
+    this.lastTouchTime = null;
+
+    if (Math.abs(this.zoomVelocity) > MIN_ZOOM_SPEED) {
+      this.startInertiaLoop();
+      return;
+    }
+
+    this.zoomVelocity = 0;
+    this.clearZoomAnchor();
   };
 
   private startInertiaLoop(): void {
@@ -462,9 +615,13 @@ export class CameraController {
     }
 
     if (Math.abs(this.zoomVelocity) > MIN_ZOOM_SPEED) {
-      const nextAltitude = this.clampAltitude(this.altitude + this.zoomVelocity * deltaTime);
+      const previousAltitude = this.altitude;
+      const nextAltitude = this.clampAltitude(this.altitude * Math.exp(this.zoomVelocity * deltaTime));
       changed = changed || nextAltitude !== this.altitude;
       this.altitude = nextAltitude;
+      if (nextAltitude !== previousAltitude) {
+        changed = this.applyZoomAnchor() || changed;
+      }
       this.zoomVelocity *= Math.exp(-ZOOM_DAMPING * deltaTime);
 
       if (
@@ -473,20 +630,27 @@ export class CameraController {
         Math.abs(this.zoomVelocity) <= MIN_ZOOM_SPEED
       ) {
         this.zoomVelocity = 0;
+        this.clearZoomAnchor();
       }
     } else {
       this.zoomVelocity = 0;
+      this.clearZoomAnchor();
     }
 
     return changed;
   }
 
-  private updateRotationVelocity(rotationDelta: Quaternion, deltaTime: number): void {
+  private updateRotationVelocity(
+    rotationDelta: Quaternion,
+    deltaTime: number,
+    sampleTime: number,
+    usesGlobeAnchor: boolean
+  ): void {
     const normalizedW = Math.max(-1, Math.min(1, rotationDelta.w));
     const angle = 2 * Math.acos(normalizedW);
 
     if (angle <= 0) {
-      this.rotationVelocity.set(0, 0, 0);
+      this.clearRotationVelocitySamples();
       return;
     }
 
@@ -502,7 +666,49 @@ export class CameraController {
       );
     }
 
-    this.rotationVelocity.copy(ROTATION_AXIS).multiplyScalar(angle / deltaTime);
+    const lastSample = this.rotationVelocitySamples[this.rotationVelocitySamples.length - 1];
+
+    if (lastSample && lastSample.usesGlobeAnchor !== usesGlobeAnchor) {
+      this.rotationVelocitySamples.length = 0;
+    }
+
+    this.rotationVelocitySamples.push({
+      time: sampleTime,
+      duration: deltaTime,
+      usesGlobeAnchor,
+      velocity: ROTATION_AXIS.clone().multiplyScalar(angle / deltaTime)
+    });
+
+    while (this.rotationVelocitySamples.length > MAX_ROTATION_VELOCITY_SAMPLES) {
+      this.rotationVelocitySamples.shift();
+    }
+
+    while (
+      this.rotationVelocitySamples.length > 0 &&
+      sampleTime - this.rotationVelocitySamples[0].time > ROTATION_VELOCITY_SMOOTHING_WINDOW
+    ) {
+      this.rotationVelocitySamples.shift();
+    }
+
+    this.rotationVelocity.set(0, 0, 0);
+    let totalDuration = 0;
+
+    for (const sample of this.rotationVelocitySamples) {
+      totalDuration += sample.duration;
+      this.rotationVelocity.addScaledVector(sample.velocity, sample.duration);
+    }
+
+    if (totalDuration <= 0) {
+      this.clearRotationVelocitySamples();
+      return;
+    }
+
+    this.rotationVelocity.multiplyScalar(1 / totalDuration);
+  }
+
+  private clearRotationVelocitySamples(): void {
+    this.rotationVelocitySamples.length = 0;
+    this.rotationVelocity.set(0, 0, 0);
   }
 
   private hasInertia(): boolean {
@@ -523,8 +729,133 @@ export class CameraController {
     return timeStamp > 0 ? timeStamp : performance.now();
   }
 
+  private normalizeWheelDelta(event: WheelEvent): number {
+    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      return event.deltaY * 16;
+    }
+
+    if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      const rect = this.element.getBoundingClientRect();
+      return event.deltaY * (rect.height || this.element.clientHeight || 1);
+    }
+
+    return event.deltaY;
+  }
+
   private getTouchCenterY(touches: TouchList): number {
     return (touches[0].clientY + touches[1].clientY) * 0.5;
+  }
+
+  private getTouchCenter(touches: TouchList): { x: number; y: number } {
+    return {
+      x: (touches[0].clientX + touches[1].clientX) * 0.5,
+      y: this.getTouchCenterY(touches)
+    };
+  }
+
+  private getTouchDistance(touches: TouchList): number {
+    return Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
+  }
+
+  private updateZoomVelocity(sampleVelocity: number): void {
+    if (Math.sign(sampleVelocity) === Math.sign(this.zoomVelocity)) {
+      this.zoomVelocity += sampleVelocity;
+      return;
+    }
+
+    this.zoomVelocity = sampleVelocity;
+  }
+
+  private captureZoomAnchor(clientX: number, clientY: number): void {
+    const directAnchor = this.projectPointerToGlobe(clientX, clientY);
+
+    if (directAnchor) {
+      this.zoomAnchorVector.copy(directAnchor);
+      this.zoomAnchorClientX = clientX;
+      this.zoomAnchorClientY = clientY;
+      this.hasZoomAnchor = true;
+      this.setInteractionDebugState("zoom", clientX, clientY);
+      return;
+    }
+
+    const rect = this.element.getBoundingClientRect();
+    const centerClientX = rect.left + (rect.width || this.element.clientWidth || 1) * 0.5;
+    const centerClientY = rect.top + (rect.height || this.element.clientHeight || 1) * 0.5;
+    const centerAnchor = this.projectPointerToGlobe(centerClientX, centerClientY);
+
+    if (centerAnchor) {
+      this.zoomAnchorVector.copy(centerAnchor);
+      this.zoomAnchorClientX = centerClientX;
+      this.zoomAnchorClientY = centerClientY;
+      this.hasZoomAnchor = true;
+      this.setInteractionDebugState("fallback", centerClientX, centerClientY);
+      return;
+    }
+
+    this.clearZoomAnchor();
+  }
+
+  private applyZoomAnchor(): boolean {
+    if (!this.hasZoomAnchor) {
+      return false;
+    }
+
+    const currentAnchor = this.projectPointerToGlobe(this.zoomAnchorClientX, this.zoomAnchorClientY);
+
+    if (!currentAnchor || currentAnchor.angleTo(this.zoomAnchorVector) <= Number.EPSILON) {
+      return false;
+    }
+
+    DRAG_ROTATION.setFromUnitVectors(currentAnchor, this.zoomAnchorVector);
+    this.orbitQuaternion.premultiply(DRAG_ROTATION);
+    return true;
+  }
+
+  private updateZoomAnchorClient(clientX: number, clientY: number): void {
+    if (!this.hasZoomAnchor) {
+      this.captureZoomAnchor(clientX, clientY);
+      return;
+    }
+
+    this.zoomAnchorClientX = clientX;
+    this.zoomAnchorClientY = clientY;
+    this.setInteractionDebugState("zoom", clientX, clientY);
+  }
+
+  private clearZoomAnchor(): void {
+    this.hasZoomAnchor = false;
+    this.zoomAnchorClientX = 0;
+    this.zoomAnchorClientY = 0;
+    this.clearInteractionDebugState();
+  }
+
+  private setInteractionDebugState(
+    kind: InteractionDebugStateKind,
+    clientX: number,
+    clientY: number,
+    blendFactor = 0
+  ): void {
+    this.interactionDebugState.visible = true;
+    this.interactionDebugState.kind = kind;
+    this.interactionDebugState.clientX = clientX;
+    this.interactionDebugState.clientY = clientY;
+    this.interactionDebugState.blendFactor = blendFactor;
+  }
+
+  private clearInteractionDebugState(): void {
+    this.interactionDebugState.visible = false;
+    this.interactionDebugState.kind = "fallback";
+    this.interactionDebugState.clientX = 0;
+    this.interactionDebugState.clientY = 0;
+    this.interactionDebugState.blendFactor = 0;
+  }
+
+  private getPanBlendFactor(): number {
+    return smoothstep(
+      this.globeRadius * PAN_BLEND_START_ALTITUDE_FACTOR,
+      this.globeRadius * PAN_BLEND_END_ALTITUDE_FACTOR,
+      this.altitude
+    );
   }
 
   private projectPointerToArcball(clientX: number, clientY: number): Vector3 {
@@ -591,4 +922,13 @@ export class CameraController {
     const localX = clientX - rectLeft;
     return this.mirrorDisplayX ? width - localX : localX;
   }
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  if (edge1 <= edge0) {
+    return value >= edge1 ? 1 : 0;
+  }
+
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
