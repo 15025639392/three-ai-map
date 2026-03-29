@@ -154,6 +154,33 @@ describe("CameraController", () => {
     expect(after.y).toBeGreaterThan(before.y);
   });
 
+  it("keeps mirrored display motion aligned with drag direction", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1,
+      mirrorDisplayX: true
+    });
+
+    controller.setView({ lng: 0, lat: 0, altitude: 2 });
+    controller.update();
+
+    const trackedPoint = getFrontSurfacePoint(camera);
+    const before = projectPointToPixels(camera, trackedPoint, 400, 400);
+
+    element.dispatchEvent(new MouseEvent("mousedown", { clientX: 200, clientY: 200 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 260, clientY: 140 }));
+    window.dispatchEvent(new MouseEvent("mouseup"));
+    controller.update();
+
+    const after = projectPointToPixels(camera, trackedPoint, 400, 400);
+
+    expect(400 - after.x).toBeGreaterThan(400 - before.x);
+    expect(after.y).toBeLessThan(before.y);
+  });
+
   it("tilts camera when control-dragging upward on desktop", () => {
     const element = createViewportElement();
     const camera = new PerspectiveCamera(45, 1, 0.1, 1000);

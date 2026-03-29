@@ -23,7 +23,7 @@ const {
     id,
     options,
   }));
-  const RasterLayerMock = vi.fn().mockImplementation((options: { id: string; source: string }) => ({
+  const RasterLayerMock = vi.fn().mockImplementation((options: { id: string; source: string; [key: string]: unknown }) => ({
     id: options.id,
     options,
   }));
@@ -99,6 +99,9 @@ describe("Gaode examples", () => {
     runGaodeSatellite(container, output);
 
     expect(GlobeEngineMock).toHaveBeenCalledTimes(1);
+    expect(GlobeEngineMock).toHaveBeenCalledWith(
+      expect.objectContaining({ mirrorDisplayX: true })
+    );
     expect(TerrainTileLayerMock).toHaveBeenCalledTimes(1);
     expect(RasterTileSourceMock).toHaveBeenCalledWith(
       "gaode-satellite",

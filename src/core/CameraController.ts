@@ -15,6 +15,7 @@ interface CameraControllerOptions {
   globeRadius: number;
   minAltitude?: number;
   maxAltitude?: number;
+  mirrorDisplayX?: boolean;
   onChange?: () => void;
 }
 
@@ -55,6 +56,7 @@ export class CameraController {
   private readonly globeRadius: number;
   private readonly minAltitude: number;
   private readonly maxAltitude: number;
+  private readonly mirrorDisplayX: boolean;
   private readonly onChange?: () => void;
   private readonly zoomSpeed = 0.0005;
   private readonly touchOptions: AddEventListenerOptions = { passive: false };
@@ -82,6 +84,7 @@ export class CameraController {
     globeRadius,
     minAltitude = globeRadius * 0.000001,
     maxAltitude = globeRadius * 20,
+    mirrorDisplayX = false,
     onChange
   }: CameraControllerOptions) {
     this.camera = camera;
@@ -89,6 +92,7 @@ export class CameraController {
     this.globeRadius = globeRadius;
     this.minAltitude = minAltitude;
     this.maxAltitude = maxAltitude;
+    this.mirrorDisplayX = mirrorDisplayX;
     this.onChange = onChange;
     this.altitude = globeRadius * 2;
 
@@ -528,7 +532,8 @@ export class CameraController {
     const width = rect.width || this.element.clientWidth || 1;
     const height = rect.height || this.element.clientHeight || 1;
     const radius = Math.max(1, Math.min(width, height) * 0.5);
-    const x = (clientX - rect.left - width * 0.5) / radius;
+    const localX = this.resolveLocalPointerX(clientX, rect.left, width);
+    const x = (localX - width * 0.5) / radius;
     const y = (height * 0.5 - (clientY - rect.top)) / radius;
     const lengthSquared = x * x + y * y;
     const z = lengthSquared > 1 ? 0 : Math.sqrt(1 - lengthSquared);
@@ -550,7 +555,8 @@ export class CameraController {
     const rect = this.element.getBoundingClientRect();
     const width = rect.width || this.element.clientWidth || 1;
     const height = rect.height || this.element.clientHeight || 1;
-    const x = ((clientX - rect.left) / width) * 2 - 1;
+    const localX = this.resolveLocalPointerX(clientX, rect.left, width);
+    const x = (localX / width) * 2 - 1;
     const y = -((clientY - rect.top) / height) * 2 + 1;
 
     this.update();
@@ -579,5 +585,10 @@ export class CameraController {
     }
 
     return GLOBE_DRAG_VECTOR.set(hit.x, hit.y, hit.z).normalize();
+  }
+
+  private resolveLocalPointerX(clientX: number, rectLeft: number, width: number): number {
+    const localX = clientX - rectLeft;
+    return this.mirrorDisplayX ? width - localX : localX;
   }
 }

@@ -57,6 +57,65 @@ describe("GlobeEngine", () => {
     engine.destroy();
   });
 
+  it("mirrors the display canvas when requested", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      mirrorDisplayX: true,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+
+    const canvas = container.querySelector("canvas");
+    expect(canvas?.style.transform).toBe("scaleX(-1)");
+    expect(canvas?.style.transformOrigin).toBe("50% 50%");
+
+    engine.destroy();
+  });
+
+  it("mirrors globe picks in screen space when display mirroring is enabled", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+    const mirroredContainer = document.createElement("div");
+    Object.defineProperty(mirroredContainer, "clientWidth", { value: 800 });
+    Object.defineProperty(mirroredContainer, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+    const mirroredEngine = new GlobeEngine({
+      container: mirroredContainer,
+      mirrorDisplayX: true,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+
+    engine.setView({ lng: 0, lat: 0, altitude: 2 });
+    mirroredEngine.setView({ lng: 0, lat: 0, altitude: 2 });
+    engine.render();
+    mirroredEngine.render();
+
+    const normalRightPick = engine.pick(75, 50);
+    const mirroredLeftPick = mirroredEngine.pick(25, 50);
+
+    if (!normalRightPick || normalRightPick.type !== "globe") {
+      throw new Error("Expected a normal globe pick");
+    }
+
+    if (!mirroredLeftPick || mirroredLeftPick.type !== "globe") {
+      throw new Error("Expected a mirrored globe pick");
+    }
+
+    expect(mirroredLeftPick.cartographic.lng).toBeCloseTo(normalRightPick.cartographic.lng, 6);
+    expect(mirroredLeftPick.cartographic.lat).toBeCloseTo(normalRightPick.cartographic.lat, 6);
+
+    engine.destroy();
+    mirroredEngine.destroy();
+  });
+
   it("prefers marker hits when picking through the screen center", () => {
     const container = document.createElement("div");
     Object.defineProperty(container, "clientWidth", { value: 800 });

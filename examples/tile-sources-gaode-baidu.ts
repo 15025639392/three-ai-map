@@ -69,6 +69,7 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
     container,
     radius: 1,
     background: "#020611",
+    mirrorDisplayX: true,
   });
 
   const terrain = new TerrainTileLayer("terrain", {
@@ -95,7 +96,7 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
     concurrency: 6
   });
   engine.addSource("gaode-satellite", imagerySource);
-  const imageryLayer = new RasterLayer({ id: "gaode-satellite", source: "gaode-satellite",zIndex: 100 });
+  const imageryLayer = new RasterLayer({ id: "gaode-satellite", source: "gaode-satellite", zIndex: 100 });
 
   engine.addLayer(terrain);
   engine.addLayer(imageryLayer);
@@ -124,6 +125,7 @@ export function runGaodeSatelliteLabels(container: HTMLElement, output?: HTMLEle
     container,
     radius: 1,
     background: "#020611",
+    mirrorDisplayX: true,
   });
 
   const terrain = new TerrainTileLayer("terrain", {
@@ -185,6 +187,7 @@ export function runGaodeRoad(container: HTMLElement, output?: HTMLElement): Glob
     container,
     radius: 1,
     background: "#f0ede8",
+    mirrorDisplayX: true,
   });
 
   const terrain = new TerrainTileLayer("terrain", {
