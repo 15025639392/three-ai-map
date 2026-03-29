@@ -1,6 +1,7 @@
 import { PerspectiveCamera, Vector3 } from "three";
 import { CameraController } from "../../src/core/CameraController";
 import { cartographicToCartesian } from "../../src/geo/projection";
+import { intersectRayWithSphere } from "../../src/geo/raycast";
 
 function projectPoint(camera: PerspectiveCamera, point: Vector3): Vector3 {
   camera.updateMatrixWorld(true);
@@ -23,6 +24,44 @@ function projectPointToPixels(
 
 function getFrontSurfacePoint(camera: PerspectiveCamera): Vector3 {
   return camera.position.clone().normalize();
+}
+
+function pickSurfacePointAtPixels(
+  camera: PerspectiveCamera,
+  width: number,
+  height: number,
+  clientX: number,
+  clientY: number,
+  radius = 1
+): Vector3 {
+  camera.updateMatrixWorld(true);
+  camera.updateProjectionMatrix();
+
+  const target = new Vector3(
+    (clientX / width) * 2 - 1,
+    -((clientY / height) * 2 - 1),
+    0.5
+  ).unproject(camera);
+  const direction = target.sub(camera.position).normalize();
+  const hit = intersectRayWithSphere(
+    {
+      x: camera.position.x,
+      y: camera.position.y,
+      z: camera.position.z
+    },
+    {
+      x: direction.x,
+      y: direction.y,
+      z: direction.z
+    },
+    radius
+  );
+
+  if (!hit) {
+    throw new Error(`Expected globe hit at ${clientX},${clientY}`);
+  }
+
+  return new Vector3(hit.x, hit.y, hit.z);
 }
 
 function createViewportElement(): HTMLDivElement {
@@ -197,20 +236,21 @@ describe("CameraController", () => {
     controller.setView({ lng: 0, lat: 20, altitude: 2 });
     controller.update();
     const beforeTilt = getTiltRadians(camera);
-    const beforeView = controller.getView();
+    const tiltAnchorPoint = getFrontSurfacePoint(camera);
+    const beforeAnchorPixels = projectPointToPixels(camera, tiltAnchorPoint, 400, 400);
 
-    element.dispatchEvent(createTimedMouseEvent("mousedown", 200, 240, 100, { ctrlKey: true }));
-    window.dispatchEvent(createTimedMouseEvent("mousemove", 200, 160, 116, { ctrlKey: true }));
-    window.dispatchEvent(createTimedMouseEvent("mouseup", 200, 160, 120));
+    element.dispatchEvent(createTimedMouseEvent("mousedown", 300, 240, 100, { ctrlKey: true }));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", 300, 160, 116, { ctrlKey: true }));
+    window.dispatchEvent(createTimedMouseEvent("mouseup", 300, 160, 120));
     controller.update();
 
     const afterTilt = getTiltRadians(camera);
-    const afterView = controller.getView();
+    const afterAnchorPixels = projectPointToPixels(camera, tiltAnchorPoint, 400, 400);
 
     expect(afterTilt).toBeGreaterThan(beforeTilt + 0.05);
-    expect(afterView.lng).toBeCloseTo(beforeView.lng, 4);
-    expect(afterView.lat).toBeCloseTo(beforeView.lat, 4);
-    expect(afterView.altitude).toBeCloseTo(beforeView.altitude, 4);
+    expect(afterAnchorPixels.x).toBeCloseTo(beforeAnchorPixels.x, 0);
+    expect(afterAnchorPixels.y).toBeCloseTo(beforeAnchorPixels.y, 0);
+    expect(controller.getView().altitude).toBeCloseTo(2, 4);
   });
 
   it("tilts camera when two-finger touch moves upward on mobile", () => {
@@ -225,6 +265,8 @@ describe("CameraController", () => {
     controller.setView({ lng: 0, lat: 20, altitude: 2 });
     controller.update();
     const beforeTilt = getTiltRadians(camera);
+    const tiltAnchorPoint = pickSurfacePointAtPixels(camera, 400, 400, 200, 240);
+    const beforeAnchorPixels = projectPointToPixels(camera, tiltAnchorPoint, 400, 400);
 
     element.dispatchEvent(
       createTimedTouchEvent(
@@ -251,6 +293,9 @@ describe("CameraController", () => {
 
     const afterTilt = getTiltRadians(camera);
     expect(afterTilt).toBeGreaterThan(beforeTilt + 0.05);
+    const afterAnchorPixels = projectPointToPixels(camera, tiltAnchorPoint, 400, 400);
+    expect(afterAnchorPixels.x).toBeCloseTo(beforeAnchorPixels.x, 0);
+    expect(afterAnchorPixels.y).toBeCloseTo(beforeAnchorPixels.y, 0);
   });
 
   it("zooms around the pinch center and preserves the globe anchor on mobile", () => {

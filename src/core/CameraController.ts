@@ -97,6 +97,10 @@ export class CameraController {
   private zoomAnchorClientX = 0;
   private zoomAnchorClientY = 0;
   private hasZoomAnchor = false;
+  private readonly tiltAnchorVector = new Vector3();
+  private tiltAnchorClientX = 0;
+  private tiltAnchorClientY = 0;
+  private hasTiltAnchor = false;
   private readonly interactionDebugState: InteractionDebugState = {
     visible: false,
     kind: "fallback",
@@ -162,6 +166,7 @@ export class CameraController {
     this.inertiaUsesGlobeAnchor = false;
     this.zoomVelocity = 0;
     this.clearZoomAnchor();
+    this.clearTiltAnchor();
     this.stopInertiaLoop();
     this.onChange?.();
   }
@@ -273,6 +278,7 @@ export class CameraController {
     this.clearRotationVelocitySamples();
     this.zoomVelocity = 0;
     this.clearZoomAnchor();
+    this.clearTiltAnchor();
     this.lastPointerTime = this.getEventTime(event.timeStamp);
     this.lastPointerClientY = event.clientY;
     this.stopInertiaLoopIfIdle();
@@ -280,6 +286,8 @@ export class CameraController {
     if (this.pointerDragMode === "tilt") {
       this.dragUsesGlobeAnchor = false;
       this.inertiaUsesGlobeAnchor = false;
+      const viewportCenter = this.getViewportCenterClient();
+      this.captureTiltAnchor(viewportCenter.x, viewportCenter.y);
       return;
     }
 
@@ -312,7 +320,11 @@ export class CameraController {
         return;
       }
 
-      if (this.applyTiltDelta(event.clientY - previousY, POINTER_TILT_SPEED)) {
+      const tiltChanged = this.applyTiltDelta(event.clientY - previousY, POINTER_TILT_SPEED);
+      const anchorChanged = tiltChanged ? this.applyTiltAnchor() : false;
+
+      if (tiltChanged || anchorChanged) {
+        this.setInteractionDebugState("tilt", this.tiltAnchorClientX, this.tiltAnchorClientY);
         this.onChange?.();
       }
 
@@ -401,6 +413,7 @@ export class CameraController {
     this.dragUsesGlobeAnchor = false;
     this.lastPointerClientY = null;
     this.lastPointerTime = null;
+    this.clearTiltAnchor();
     this.clearInteractionDebugState();
 
     if (shouldApplyInertia) {
@@ -455,6 +468,7 @@ export class CameraController {
     this.inertiaUsesGlobeAnchor = false;
     this.zoomVelocity = 0;
     this.captureZoomAnchor(touchCenter.x, touchCenter.y);
+    this.captureTiltAnchor(touchCenter.x, touchCenter.y);
     this.stopInertiaLoopIfIdle();
     event.preventDefault();
   };
@@ -504,7 +518,8 @@ export class CameraController {
     }
 
     if (this.applyTiltDelta(centerY - previousCenterY, TOUCH_TILT_SPEED)) {
-      changed = true;
+      changed = this.applyTiltAnchor() || changed;
+      this.setInteractionDebugState("tilt", this.tiltAnchorClientX, this.tiltAnchorClientY);
     }
 
     if (changed) {
@@ -530,6 +545,7 @@ export class CameraController {
 
     this.lastTouchDistance = null;
     this.lastTouchTime = null;
+    this.clearTiltAnchor();
 
     if (Math.abs(this.zoomVelocity) > MIN_ZOOM_SPEED) {
       this.startInertiaLoop();
@@ -757,6 +773,17 @@ export class CameraController {
     return Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
   }
 
+  private getViewportCenterClient(): { x: number; y: number } {
+    const rect = this.element.getBoundingClientRect();
+    const width = rect.width || this.element.clientWidth || 1;
+    const height = rect.height || this.element.clientHeight || 1;
+
+    return {
+      x: rect.left + width * 0.5,
+      y: rect.top + height * 0.5
+    };
+  }
+
   private updateZoomVelocity(sampleVelocity: number): void {
     if (Math.sign(sampleVelocity) === Math.sign(this.zoomVelocity)) {
       this.zoomVelocity += sampleVelocity;
@@ -826,7 +853,61 @@ export class CameraController {
     this.hasZoomAnchor = false;
     this.zoomAnchorClientX = 0;
     this.zoomAnchorClientY = 0;
-    this.clearInteractionDebugState();
+    this.clearInteractionDebugStateIfNoAnchor();
+  }
+
+  private captureTiltAnchor(clientX: number, clientY: number): void {
+    const directAnchor = this.projectPointerToGlobe(clientX, clientY);
+
+    if (!directAnchor) {
+      this.clearTiltAnchor();
+      return;
+    }
+
+    this.tiltAnchorVector.copy(directAnchor);
+    this.tiltAnchorClientX = clientX;
+    this.tiltAnchorClientY = clientY;
+    this.hasTiltAnchor = true;
+    this.setInteractionDebugState("tilt", clientX, clientY);
+  }
+
+  private applyTiltAnchor(): boolean {
+    if (!this.hasTiltAnchor) {
+      return false;
+    }
+
+    const currentAnchor = this.projectPointerToGlobe(this.tiltAnchorClientX, this.tiltAnchorClientY);
+
+    if (!currentAnchor || currentAnchor.angleTo(this.tiltAnchorVector) <= Number.EPSILON) {
+      return false;
+    }
+
+    DRAG_ROTATION.setFromUnitVectors(currentAnchor, this.tiltAnchorVector);
+    this.orbitQuaternion.premultiply(DRAG_ROTATION);
+    return true;
+  }
+
+  private updateTiltAnchorClient(clientX: number, clientY: number): void {
+    if (!this.hasTiltAnchor) {
+      this.captureTiltAnchor(clientX, clientY);
+      return;
+    }
+
+    this.tiltAnchorClientX = clientX;
+    this.tiltAnchorClientY = clientY;
+  }
+
+  private clearTiltAnchor(): void {
+    this.hasTiltAnchor = false;
+    this.tiltAnchorClientX = 0;
+    this.tiltAnchorClientY = 0;
+    this.clearInteractionDebugStateIfNoAnchor();
+  }
+
+  private clearInteractionDebugStateIfNoAnchor(): void {
+    if (!this.hasZoomAnchor && !this.hasTiltAnchor) {
+      this.clearInteractionDebugState();
+    }
   }
 
   private setInteractionDebugState(
