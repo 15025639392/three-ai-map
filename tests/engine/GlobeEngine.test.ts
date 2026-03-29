@@ -110,6 +110,29 @@ describe("GlobeEngine", () => {
     engine.destroy();
   });
 
+  it("prevents the default context menu only on the renderer canvas", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+
+    const canvas = container.querySelector("canvas");
+    const canvasEvent = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    const containerEvent = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+
+    canvas?.dispatchEvent(canvasEvent);
+    container.dispatchEvent(containerEvent);
+
+    expect(canvasEvent.defaultPrevented).toBe(true);
+    expect(containerEvent.defaultPrevented).toBe(false);
+
+    engine.destroy();
+  });
+
   it("renders an interaction anchor overlay when enabled", () => {
     const container = document.createElement("div");
     Object.defineProperty(container, "clientWidth", { value: 800 });

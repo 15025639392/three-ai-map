@@ -160,6 +160,7 @@ export class GlobeEngine {
     this.setView({ lng: 0, lat: 20, altitude: radius * 2.2 });
     window.addEventListener("resize", this.handleResize);
     this.rendererSystem.renderer.domElement.addEventListener("click", this.handleClick);
+    this.rendererSystem.renderer.domElement.addEventListener("contextmenu", this.handleContextMenu);
     this.render();
   }
 
@@ -338,6 +339,7 @@ export class GlobeEngine {
   destroy(): void {
     window.removeEventListener("resize", this.handleResize);
     this.rendererSystem.renderer.domElement.removeEventListener("click", this.handleClick);
+    this.rendererSystem.renderer.domElement.removeEventListener("contextmenu", this.handleContextMenu);
     this.cancelScheduledRender();
     this.sourceManager.clear();
     this.layerManager.clear();
@@ -377,6 +379,10 @@ export class GlobeEngine {
       originalEvent: event,
       pickResult
     });
+  };
+
+  private handleContextMenu = (event: MouseEvent): void => {
+    event.preventDefault();
   };
 
   private handleCameraChange = (): void => {
