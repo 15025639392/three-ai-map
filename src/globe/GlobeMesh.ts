@@ -8,7 +8,6 @@ interface GlobeMeshOptions {
   radius: number;
   widthSegments?: number;
   heightSegments?: number;
-  terrainStrength?: number;
 }
 
 export class GlobeMesh {
@@ -16,7 +15,6 @@ export class GlobeMesh {
   readonly mesh: Mesh<SphereGeometry, MeshStandardMaterial>;
 
   private readonly radius: number;
-  private readonly terrainStrength: number;
   private readonly basePositions: Float32Array;
   private readonly baseUvs: Float32Array;
   private elevationSampler: ElevationSampler | null = null;
@@ -26,10 +24,8 @@ export class GlobeMesh {
     radius,
     widthSegments = 96,
     heightSegments = 64,
-    terrainStrength = 0
   }: GlobeMeshOptions) {
     this.radius = radius;
-    this.terrainStrength = terrainStrength;
     this.material = createGlobeMaterial();
     const geometry = new SphereGeometry(radius, widthSegments, heightSegments);
     this.basePositions = new Float32Array(geometry.attributes.position.array);
@@ -91,14 +87,11 @@ export class GlobeMesh {
       return (heightMeters / WGS84_RADIUS) * this.radius * this.elevationExaggeration;
     }
 
-    if (this.terrainStrength <= 0) {
-      return 0;
-    }
-
-    const terrainSample =
-      Math.sin((nx + ny + nz) * 7.0) * 0.5 +
-      Math.cos(ny * 11.0) * 0.35 +
-      Math.sin(nx * 13.0) * 0.15;
-    return terrainSample * this.terrainStrength;
+    void nx;
+    void ny;
+    void nz;
+    void u;
+    void v;
+    return 0;
   }
 }

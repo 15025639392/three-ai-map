@@ -123,7 +123,7 @@ export function runObliquePhotogrammetryRegression(
   container.dataset.averageFps = "";
   container.dataset.frameDrops = "";
   container.dataset.allExpected = "";
-  output.textContent = "booting:oblique-photogrammetry-regression";
+  output.textContent = "启动中:oblique-photogrammetry-regression";
 
   engine.addLayer(layer);
   engine.setView({ lng: 0, lat: 0, altitude: 2.8 });
@@ -286,7 +286,7 @@ export function runObliquePhotogrammetryRegression(
       output.textContent = `after-oblique-photogrammetry:nodes=${baselineVisibleNodeCount}/${nearVisibleNodeCount}/${recoveryVisibleNodeCount}:pick=${pickHitType}:${pickHitNodeId}:drift=${visibilityDriftMax}`;
     } catch (error) {
       container.dataset.phase = "error";
-      output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+      output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
     }
   })();
 
@@ -315,9 +315,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:oblique-photogrammetry-regression</div>
+      <div class="demo-status" id="status-output">启动中:oblique-photogrammetry-regression</div>
     </main>
   `;
 

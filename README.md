@@ -6,11 +6,10 @@
 
 ### 渲染核心
 - 3D 地球渲染（球体 mesh + 程序化地形 + 大气层 + 星空背景）
-- WebMercator XYZ 在线瓦片影像加载（URL 模板；按视口选择可见瓦片）
-- Terrarium DEM 真实高程解码与顶点位移（支持 Worker，自动回退主线程）
-- Surface Tile Mesh：逐瓦片曲面 patch mesh，影像 + 高程绑定到同一 mesh
-- SurfaceTile 影像请求支持可配置重试与降级（重试耗尽后可回退到纯色占位）
-- ElevationLayer tile-load 支持可配置重试（支持 layer 默认值与 engine 统一策略覆盖）
+- WebMercator XYZ 在线瓦片影像加载（`RasterTileSource` 负责缓存/调度/加载；`RasterLayer` 负责贴图与顺序/透明度）
+- Terrarium / Mapbox DEM 真实高程解码与顶点位移（支持 Worker，自动回退主线程）
+- `TerrainTileLayer`：逐瓦片曲面 patch mesh（DEM 可按 `terrain.extraBounds` 白名单控制请求范围）
+- Raster retry/fallback：`RasterLayer` 的 imagery 链路支持可配置重试与纯色占位回退（由 `recoveryPolicy` 统一覆盖）
 - VectorTileLayer tile-parse 支持可配置重试与空结果降级（可按规则触发 fallback）
 - GlobeEngine 支持 `recoveryPolicy` 统一恢复策略入口（按 `stage/category/severity` 覆盖图层恢复行为）
 - 混合 LOD 叶子集：中心区域细化一级、外围保留父级，降低深缩放开销
@@ -22,6 +21,7 @@
 
 ### 交互
 - Arcball 轨迹球鼠标拖拽，跨极自由旋转
+- 地图倾斜：PC 端支持 `Ctrl + 鼠标按下后向上拖动`，移动端支持双指向上推
 - 滚轮缩放 + 阻尼惯性
 - 统一点击事件系统（射线拾取 + 统一 PickResult）
 - 统一错误事件系统（`engine.on("error", ...)` 接收 layer 异步失败，包含阶段、分类、严重级别）
@@ -29,8 +29,8 @@
 
 ### 图层系统
 - **基础图层**：标记点（MarkerLayer）、折线（PolylineLayer）、多边形（PolygonLayer）
-- **影像图层**：单张纹理（ImageryLayer）
-- **瓦片图层**：Surface Tile（SurfaceTileLayer，瓦片影像 + 高程）、全局高程（ElevationLayer）
+- **地形图层**：`TerrainTileLayer`（DEM→地形网格，仅负责几何）
+- **栅格叠加**：`RasterTileSource`（Source） + `RasterLayer`（Layer，把某个 source 的瓦片贴到当前地形网格上）
 - **高级图层**：矢量瓦片（VectorTileLayer，MVT 渲染 MVP）、实例化标记（InstancedMarkerLayer）、聚合（ClusterLayer）、热力图（HeatmapLayer）、自定义图层（CustomLayer）
 
 ### 空间计算
@@ -103,7 +103,9 @@ metrics baseline 断言会输出 `test-results/map-engine-metrics-baseline-diff.
 ```typescript
 import {
   GlobeEngine,
-  SurfaceTileLayer,
+  TerrainTileLayer,
+  RasterTileSource,
+  RasterLayer,
 } from "./src";
 
 const container = document.getElementById("globe")!;
@@ -146,14 +148,38 @@ const engine = new GlobeEngine({
   }
 });
 
-// Surface tiles（瓦片影像 + 高程）
-const surface = new SurfaceTileLayer("surface", {
-  minZoom: 3,
-  maxZoom: 11,
+// Terrain（DEM → 地形网格）
+const terrain = new TerrainTileLayer("terrain", {
+  terrain: {
+    tiles: [
+      "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+    ],
+    encode: "terrarium",
+    minZoom: 3,
+    maxZoom: 11,
+    tileSize: 256,
+    cache: 96,
+    // extraBounds 省略=全局允许；[] = 禁用 DEM 请求；有值=仅在 bbox 白名单内请求 DEM
+    // extraBounds: [[west,south,east,north]]
+  },
   meshSegments: 16,
-  skirtDepthMeters: 1400
+  skirtDepthMeters: 1400,
 });
-engine.addLayer(surface);
+engine.addLayer(terrain);
+
+// Raster（Source + Layer）：可复用的数据源 + 叠加图层
+engine.addSource(
+  "osm",
+  new RasterTileSource("osm", {
+    tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+    minZoom: 0,
+    maxZoom: 19,
+    tileSize: 256,
+    cache: 256,
+    concurrency: 8,
+  })
+);
+engine.addLayer(new RasterLayer({ id: "osm", source: "osm", opacity: 1 }));
 
 // 设置视角
 engine.setView({ lng: 110, lat: 28, altitude: 2.4 });
@@ -177,8 +203,9 @@ engine.on("error", ({ layerId, stage, category, severity, error, tileKey }) => {
 | 类别 | 导出 |
 |------|------|
 | 核心 | `GlobeEngine`, `GlobeEngineEvents`, `GlobeEngineOptions`, `GlobeEngineRecoveryPolicy`, `GlobeEngineRecoveryRule`, `EngineView` |
-| 图层 | `Layer`, `LayerErrorPayload`, `LayerErrorCategory`, `LayerErrorSeverity`, `LayerRecoveryQuery`, `LayerRecoveryOverrides`, `MarkerLayer`, `PolylineLayer`, `PolygonLayer`, `ImageryLayer` |
-| 瓦片 | `ElevationLayer`, `SurfaceTileLayer`, `SurfaceTileLayerOptions`, `CoordTransformFn`, `defaultTileLoader`, `corsTileLoader`, `TileSource` |
+| 图层 | `Layer`, `LayerErrorPayload`, `LayerErrorCategory`, `LayerErrorSeverity`, `LayerRecoveryQuery`, `LayerRecoveryOverrides`, `MarkerLayer`, `PolylineLayer`, `PolygonLayer`, `TerrainTileLayer`, `RasterLayer` |
+| Source | `Source`, `RasterTileSource` |
+| 瓦片 | `TerrainConfig`, `TerrainTileLayerOptions`, `CoordTransformFn`, `LngLatBounds`, `ElevationEncoding`, `defaultTileLoader`, `corsTileLoader`, `TileSource` |
 | 高级 | `VectorTileLayer`（MVT 渲染 MVP）, `InstancedMarkerLayer`, `ClusterLayer`, `HeatmapLayer`, `CustomLayer` |
 | 空间 | `haversineDistance`, `greatCircleDistance`, `polygonArea`, `pointInPolygon`, `distanceToLine`, `bearing` |
 | 坐标 | `wgs84ToGcj02`, `gcj02ToWgs84`, `wgs84ToBd09`, `gcj02ToBd09`, `bd09ToGcj02` |

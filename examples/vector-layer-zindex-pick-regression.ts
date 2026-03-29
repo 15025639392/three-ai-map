@@ -37,7 +37,7 @@ export function runVectorLayerZIndexPickRegression(
   container.dataset.hiddenFallbackHitLayer = "";
   container.dataset.allHitsExpected = "";
   container.dataset.missHitIsVectorFeature = "";
-  output.textContent = "booting:vector-layer-zindex-pick-regression";
+  output.textContent = "启动中:vector-layer-zindex-pick-regression";
 
   const engine = new GlobeEngine({
     container,
@@ -156,9 +156,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:vector-layer-zindex-pick-regression</div>
+      <div class="demo-status" id="status-output">启动中:vector-layer-zindex-pick-regression</div>
     </main>
   `;
 

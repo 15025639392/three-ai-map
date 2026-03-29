@@ -1,57 +1,67 @@
 const {
   GlobeEngineMock,
   addLayerMock,
+  addSourceMock,
   removeLayerMock,
   setViewMock,
+  getViewMock,
   onMock,
   addMarkerMock,
   addPolylineMock,
   addPolygonMock,
-  SurfaceTileLayerMock,
-  ImageryLayerMock,
-  ElevationLayerMock
+  TerrainTileLayerMock,
+  RasterTileSourceMock,
+  RasterLayerMock
 } = vi.hoisted(() => {
   const addLayerMock = vi.fn();
+  const addSourceMock = vi.fn();
   const removeLayerMock = vi.fn();
   const setViewMock = vi.fn();
+  const getViewMock = vi.fn().mockReturnValue({ lng: 0, lat: 0, altitude: 2 });
   const onMock = vi.fn();
   const addMarkerMock = vi.fn();
   const addPolylineMock = vi.fn();
   const addPolygonMock = vi.fn();
   const GlobeEngineMock = vi.fn().mockImplementation(() => ({
     addLayer: addLayerMock,
+    addSource: addSourceMock,
     removeLayer: removeLayerMock,
     setView: setViewMock,
+    getView: getViewMock,
     on: onMock,
     addMarker: addMarkerMock,
     addPolyline: addPolylineMock,
-    addPolygon: addPolygonMock
+    addPolygon: addPolygonMock,
+    getPerformanceReport: () => ({ averageFPS: 60, frameDrops: 0, metrics: new Map() }),
   }));
-  const SurfaceTileLayerMock = vi.fn().mockImplementation((id: string) => ({
+  const TerrainTileLayerMock = vi.fn().mockImplementation((id: string, options?: Record<string, unknown>) => ({
     id,
+    options,
     ready: () => Promise.resolve()
   }));
-  const ImageryLayerMock = vi.fn().mockImplementation((id: string) => ({
+  const RasterTileSourceMock = vi.fn().mockImplementation((id: string, options?: Record<string, unknown>) => ({
     id,
-    ready: () => Promise.resolve()
+    options
   }));
-  const ElevationLayerMock = vi.fn().mockImplementation((id: string) => ({
-    id,
-    ready: () => Promise.resolve()
+  const RasterLayerMock = vi.fn().mockImplementation((options: { id: string }) => ({
+    id: options.id,
+    options
   }));
 
   return {
     GlobeEngineMock,
     addLayerMock,
+    addSourceMock,
     removeLayerMock,
     setViewMock,
+    getViewMock,
     onMock,
     addMarkerMock,
     addPolylineMock,
     addPolygonMock,
-    SurfaceTileLayerMock,
-    ImageryLayerMock,
-    ElevationLayerMock
+    TerrainTileLayerMock,
+    RasterTileSourceMock,
+    RasterLayerMock
   };
 });
 
@@ -59,16 +69,16 @@ vi.mock("../../src/engine/GlobeEngine", () => ({
   GlobeEngine: GlobeEngineMock
 }));
 
-vi.mock("../../src/layers/SurfaceTileLayer", () => ({
-  SurfaceTileLayer: SurfaceTileLayerMock
+vi.mock("../../src/layers/TerrainTileLayer", () => ({
+  TerrainTileLayer: TerrainTileLayerMock
 }));
 
-vi.mock("../../src/layers/ImageryLayer", () => ({
-  ImageryLayer: ImageryLayerMock
+vi.mock("../../src/sources/RasterTileSource", () => ({
+  RasterTileSource: RasterTileSourceMock
 }));
 
-vi.mock("../../src/layers/ElevationLayer", () => ({
-  ElevationLayer: ElevationLayerMock
+vi.mock("../../src/layers/RasterLayer", () => ({
+  RasterLayer: RasterLayerMock
 }));
 
 import { runBasicGlobe } from "../../examples/basic-globe";
@@ -78,15 +88,17 @@ describe("runBasicGlobe", () => {
 
   beforeEach(() => {
     addLayerMock.mockClear();
+    addSourceMock.mockClear();
     removeLayerMock.mockClear();
     setViewMock.mockClear();
+    getViewMock.mockClear();
     onMock.mockClear();
     addMarkerMock.mockClear();
     addPolylineMock.mockClear();
     addPolygonMock.mockClear();
-    SurfaceTileLayerMock.mockClear();
-    ImageryLayerMock.mockClear();
-    ElevationLayerMock.mockClear();
+    TerrainTileLayerMock.mockClear();
+    RasterTileSourceMock.mockClear();
+    RasterLayerMock.mockClear();
     getContextSpy = vi
       .spyOn(HTMLCanvasElement.prototype, "getContext")
       .mockImplementation(() => ({
@@ -111,25 +123,37 @@ describe("runBasicGlobe", () => {
     getContextSpy.mockRestore();
   });
 
-  it("loads surface tiles on top of elevation layer", () => {
+  it("wires terrain + raster source/layer", () => {
     const container = document.createElement("div");
     const output = document.createElement("div");
 
     runBasicGlobe(container, output);
 
-    expect(ImageryLayerMock).not.toHaveBeenCalled();
-    expect(SurfaceTileLayerMock).toHaveBeenCalledTimes(1);
-    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
-      "surface-tiles",
+    expect(TerrainTileLayerMock).toHaveBeenCalledTimes(1);
+    expect(TerrainTileLayerMock).toHaveBeenCalledWith(
+      "terrain",
       expect.objectContaining({
-        tileSize: 128,
-        maxZoom: 11,
+        terrain: expect.objectContaining({
+          tileSize: 128,
+          maxZoom: 11,
+        }),
         zoomExaggerationBoost: 6,
         textureUvInsetPixels: 1,
         skirtDepthMeters: 1400
       })
     );
-    expect(ElevationLayerMock).toHaveBeenCalledTimes(1);
+    expect(RasterTileSourceMock).toHaveBeenCalledTimes(1);
+    expect(RasterTileSourceMock).toHaveBeenCalledWith(
+      "osm",
+      expect.objectContaining({
+        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: 128
+      })
+    );
+    expect(addSourceMock).toHaveBeenCalledTimes(1);
+    expect(RasterLayerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "osm", source: "osm" })
+    );
     expect(addLayerMock).toHaveBeenCalledTimes(2);
   });
 });

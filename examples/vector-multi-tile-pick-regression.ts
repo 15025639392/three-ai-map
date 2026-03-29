@@ -40,7 +40,7 @@ export function runVectorMultiTilePickRegression(
   container.dataset.allHitsExpected = "";
   container.dataset.tileBucketCount = "";
   container.dataset.missHitIsVectorFeature = "";
-  output.textContent = "booting:vector-multi-tile-pick-regression";
+  output.textContent = "启动中:vector-multi-tile-pick-regression";
 
   const engine = new GlobeEngine({
     container,
@@ -176,9 +176,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:vector-multi-tile-pick-regression</div>
+      <div class="demo-status" id="status-output">启动中:vector-multi-tile-pick-regression</div>
     </main>
   `;
 

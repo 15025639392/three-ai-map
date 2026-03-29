@@ -46,6 +46,9 @@ export class CustomLayer<T = unknown> extends Layer {
     this.disposeCallback = options.dispose;
     this._visible = options.visible ?? true;
     this._zIndex = options.zIndex ?? 0;
+    if (options.zIndex !== undefined) {
+      this.zIndex = options.zIndex;
+    }
   }
 
   render(context: RenderContext): boolean {

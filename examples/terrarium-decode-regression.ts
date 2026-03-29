@@ -68,7 +68,7 @@ export async function runTerrariumDecodeRegression(
   container.dataset.fallbackHitRate = "";
   container.dataset.workerSignature = "";
   container.dataset.fallbackSignature = "";
-  output.textContent = "booting:terrarium-decode-regression";
+  output.textContent = "启动中:terrarium-decode-regression";
 
   const workerHost = window as Window & { Worker: typeof Worker };
   const nativeWorker = workerHost.Worker;
@@ -132,7 +132,7 @@ export async function runTerrariumDecodeRegression(
       `fallback=${fallbackStats.fallbackCount}/${fallbackStats.requestCount}`;
   } catch (error) {
     container.dataset.phase = "error";
-    output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+    output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   } finally {
     workerDecoder.dispose();
     fallbackDecoder.dispose();
@@ -148,9 +148,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="decode-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:terrarium-decode-regression</div>
+      <div class="demo-status" id="status-output">启动中:terrarium-decode-regression</div>
     </main>
   `;
 

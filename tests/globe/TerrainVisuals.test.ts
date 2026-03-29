@@ -2,25 +2,27 @@ import { Scene } from "three";
 import { AtmosphereMesh } from "../../src/globe/AtmosphereMesh";
 import { GlobeMesh } from "../../src/globe/GlobeMesh";
 import { Starfield } from "../../src/globe/Starfield";
+import { WGS84_RADIUS } from "../../src/geo/ellipsoid";
 
 describe("third-phase globe visuals", () => {
-  it("displaces globe vertices when terrain is enabled", () => {
-    const flat = new GlobeMesh({ radius: 1 });
-    const terrain = new GlobeMesh({ radius: 1, terrainStrength: 0.08 });
-    const flatPositions = flat.mesh.geometry.attributes.position.array as Float32Array;
-    const terrainPositions = terrain.mesh.geometry.attributes.position.array as Float32Array;
-    const flatRadius = Math.sqrt(
-      flatPositions[0] * flatPositions[0] +
-        flatPositions[1] * flatPositions[1] +
-        flatPositions[2] * flatPositions[2]
-    );
-    const terrainRadius = Math.sqrt(
-      terrainPositions[0] * terrainPositions[0] +
-        terrainPositions[1] * terrainPositions[1] +
-        terrainPositions[2] * terrainPositions[2]
+  it("displaces globe vertices when elevation sampler is set", () => {
+    const globe = new GlobeMesh({ radius: 1 });
+    const positionsBefore = globe.mesh.geometry.attributes.position.array as Float32Array;
+    const radiusBefore = Math.sqrt(
+      positionsBefore[0] * positionsBefore[0] +
+        positionsBefore[1] * positionsBefore[1] +
+        positionsBefore[2] * positionsBefore[2]
     );
 
-    expect(terrainRadius).not.toBeCloseTo(flatRadius);
+    globe.setElevationSampler(() => WGS84_RADIUS, 1);
+    const positionsAfter = globe.mesh.geometry.attributes.position.array as Float32Array;
+    const radiusAfter = Math.sqrt(
+      positionsAfter[0] * positionsAfter[0] +
+        positionsAfter[1] * positionsAfter[1] +
+        positionsAfter[2] * positionsAfter[2]
+    );
+
+    expect(radiusAfter).not.toBeCloseTo(radiusBefore);
   });
 
   it("creates atmosphere and starfield scene nodes", () => {

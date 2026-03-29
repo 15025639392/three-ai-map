@@ -30,6 +30,9 @@ const GLOBE_DRAG_VECTOR = new Vector3();
 const POINTER_RAY_TARGET = new Vector3();
 const POINTER_RAY_DIRECTION = new Vector3();
 const ROTATION_AXIS = new Vector3();
+const TILT_ROTATION = new Quaternion();
+const TILT_LOOK_DIRECTION = new Vector3();
+const TILT_LOOK_TARGET = new Vector3();
 
 const DEFAULT_FRAME_TIME = 1000 / 60;
 const ROTATION_DAMPING = 0.006;
@@ -39,6 +42,12 @@ const MIN_ZOOM_SPEED = 0.00001;
 const MIN_NEAR_PLANE = 0.0000002;
 const MAX_NEAR_PLANE = 0.1;
 const NEAR_PLANE_ALTITUDE_FACTOR = 0.5;
+const MIN_TILT_RADIANS = 0;
+const MAX_TILT_RADIANS = (75 * Math.PI) / 180;
+const POINTER_TILT_SPEED = 0.004;
+const TOUCH_TILT_SPEED = 0.004;
+
+type PointerDragMode = "orbit" | "tilt";
 
 export class CameraController {
   private readonly camera: PerspectiveCamera;
@@ -48,8 +57,11 @@ export class CameraController {
   private readonly maxAltitude: number;
   private readonly onChange?: () => void;
   private readonly zoomSpeed = 0.0005;
+  private readonly touchOptions: AddEventListenerOptions = { passive: false };
   private isDragging = false;
   private altitude: number;
+  private tiltRadians = 0;
+  private pointerDragMode: PointerDragMode = "orbit";
   private readonly orbitQuaternion = new Quaternion();
   private readonly dragVector = new Vector3();
   private readonly rotationVelocity = new Vector3();
@@ -59,7 +71,10 @@ export class CameraController {
   private animationFrameId: number | null = null;
   private previousAnimationTime: number | null = null;
   private lastPointerTime: number | null = null;
+  private lastPointerClientY: number | null = null;
   private lastWheelTime: number | null = null;
+  private isTouchTilting = false;
+  private lastTouchCenterY: number | null = null;
 
   constructor({
     camera,
@@ -81,6 +96,10 @@ export class CameraController {
     window.addEventListener("mousemove", this.handlePointerMove);
     window.addEventListener("mouseup", this.handlePointerUp);
     this.element.addEventListener("wheel", this.handleWheel, { passive: true });
+    this.element.addEventListener("touchstart", this.handleTouchStart, this.touchOptions);
+    this.element.addEventListener("touchmove", this.handleTouchMove, this.touchOptions);
+    this.element.addEventListener("touchend", this.handleTouchEnd, this.touchOptions);
+    this.element.addEventListener("touchcancel", this.handleTouchEnd, this.touchOptions);
 
     this.update();
   }
@@ -92,6 +111,7 @@ export class CameraController {
 
   setView(view: CameraView): void {
     this.altitude = this.clampAltitude(view.altitude);
+    this.tiltRadians = MIN_TILT_RADIANS;
     ORBIT_EULER.set(
       0,
       (-normalizeLongitude(view.lng) * Math.PI) / 180,
@@ -136,7 +156,21 @@ export class CameraController {
 
     this.camera.position.set(cartesian.x, cartesian.y, cartesian.z);
     this.camera.up.copy(up);
-    this.camera.lookAt(LOOK_AT_TARGET);
+
+    if (this.tiltRadians <= MIN_TILT_RADIANS + Number.EPSILON) {
+      this.camera.lookAt(LOOK_AT_TARGET);
+      return;
+    }
+
+    TILT_LOOK_DIRECTION
+      .copy(BASE_POSITION)
+      .multiplyScalar(-1)
+      .applyQuaternion(this.orbitQuaternion);
+    ROTATION_AXIS.copy(BASE_RIGHT).applyQuaternion(this.orbitQuaternion).normalize();
+    TILT_ROTATION.setFromAxisAngle(ROTATION_AXIS, this.tiltRadians);
+    TILT_LOOK_DIRECTION.applyQuaternion(TILT_ROTATION).normalize();
+    TILT_LOOK_TARGET.copy(this.camera.position).addScaledVector(TILT_LOOK_DIRECTION, orbitDistance);
+    this.camera.lookAt(TILT_LOOK_TARGET);
   }
 
   dispose(): void {
@@ -144,11 +178,34 @@ export class CameraController {
     window.removeEventListener("mousemove", this.handlePointerMove);
     window.removeEventListener("mouseup", this.handlePointerUp);
     this.element.removeEventListener("wheel", this.handleWheel);
+    this.element.removeEventListener("touchstart", this.handleTouchStart, this.touchOptions);
+    this.element.removeEventListener("touchmove", this.handleTouchMove, this.touchOptions);
+    this.element.removeEventListener("touchend", this.handleTouchEnd, this.touchOptions);
+    this.element.removeEventListener("touchcancel", this.handleTouchEnd, this.touchOptions);
     this.stopInertiaLoop();
   }
 
   private clampAltitude(altitude: number): number {
     return Math.max(this.minAltitude, Math.min(this.maxAltitude, altitude));
+  }
+
+  private clampTilt(tiltRadians: number): number {
+    return Math.max(MIN_TILT_RADIANS, Math.min(MAX_TILT_RADIANS, tiltRadians));
+  }
+
+  private applyTiltDelta(deltaY: number, speed: number): boolean {
+    if (deltaY === 0) {
+      return false;
+    }
+
+    const nextTilt = this.clampTilt(this.tiltRadians - deltaY * speed);
+
+    if (Math.abs(nextTilt - this.tiltRadians) <= Number.EPSILON) {
+      return false;
+    }
+
+    this.tiltRadians = nextTilt;
+    return true;
   }
 
   private updateCameraNearPlane(): void {
@@ -167,9 +224,18 @@ export class CameraController {
 
   private handlePointerDown = (event: MouseEvent): void => {
     this.isDragging = true;
+    this.pointerDragMode = event.ctrlKey ? "tilt" : "orbit";
     this.rotationVelocity.set(0, 0, 0);
     this.lastPointerTime = this.getEventTime(event.timeStamp);
+    this.lastPointerClientY = event.clientY;
     this.stopInertiaLoopIfIdle();
+
+    if (this.pointerDragMode === "tilt") {
+      this.dragUsesGlobeAnchor = false;
+      this.inertiaUsesGlobeAnchor = false;
+      return;
+    }
+
     const globeAnchor = this.projectPointerToGlobe(event.clientX, event.clientY);
 
     if (globeAnchor) {
@@ -186,6 +252,21 @@ export class CameraController {
 
   private handlePointerMove = (event: MouseEvent): void => {
     if (!this.isDragging) {
+      return;
+    }
+
+    if (this.pointerDragMode === "tilt") {
+      const previousY = this.lastPointerClientY;
+      this.lastPointerClientY = event.clientY;
+
+      if (previousY === null) {
+        return;
+      }
+
+      if (this.applyTiltDelta(event.clientY - previousY, POINTER_TILT_SPEED)) {
+        this.onChange?.();
+      }
+
       return;
     }
 
@@ -225,9 +306,15 @@ export class CameraController {
 
   private handlePointerUp = (): void => {
     this.isDragging = false;
+    const shouldApplyInertia = this.pointerDragMode === "orbit";
+    this.pointerDragMode = "orbit";
     this.dragUsesGlobeAnchor = false;
+    this.lastPointerClientY = null;
     this.lastPointerTime = null;
-    this.startInertiaLoop();
+
+    if (shouldApplyInertia) {
+      this.startInertiaLoop();
+    }
   };
 
   private handleWheel = (event: WheelEvent): void => {
@@ -248,6 +335,52 @@ export class CameraController {
     this.lastWheelTime = this.getEventTime(event.timeStamp);
     this.startInertiaLoop();
     this.onChange?.();
+  };
+
+  private handleTouchStart = (event: TouchEvent): void => {
+    if (event.touches.length !== 2) {
+      this.isTouchTilting = false;
+      this.lastTouchCenterY = null;
+      return;
+    }
+
+    this.isTouchTilting = true;
+    this.lastTouchCenterY = this.getTouchCenterY(event.touches);
+    this.rotationVelocity.set(0, 0, 0);
+    this.inertiaUsesGlobeAnchor = false;
+    this.stopInertiaLoopIfIdle();
+    event.preventDefault();
+  };
+
+  private handleTouchMove = (event: TouchEvent): void => {
+    if (!this.isTouchTilting || event.touches.length !== 2) {
+      return;
+    }
+
+    const previousCenterY = this.lastTouchCenterY;
+    const centerY = this.getTouchCenterY(event.touches);
+    this.lastTouchCenterY = centerY;
+
+    if (previousCenterY === null) {
+      return;
+    }
+
+    if (this.applyTiltDelta(centerY - previousCenterY, TOUCH_TILT_SPEED)) {
+      this.onChange?.();
+    }
+
+    event.preventDefault();
+  };
+
+  private handleTouchEnd = (event: TouchEvent): void => {
+    if (event.touches.length === 2) {
+      this.lastTouchCenterY = this.getTouchCenterY(event.touches);
+      this.isTouchTilting = true;
+      return;
+    }
+
+    this.isTouchTilting = false;
+    this.lastTouchCenterY = null;
   };
 
   private startInertiaLoop(): void {
@@ -384,6 +517,10 @@ export class CameraController {
 
   private getEventTime(timeStamp: number): number {
     return timeStamp > 0 ? timeStamp : performance.now();
+  }
+
+  private getTouchCenterY(touches: TouchList): number {
+    return (touches[0].clientY + touches[1].clientY) * 0.5;
   }
 
   private projectPointerToArcball(clientX: number, clientY: number): Vector3 {

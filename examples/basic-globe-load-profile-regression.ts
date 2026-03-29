@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, SurfaceTileLayer } from "../src";
-import type { ElevationTileData } from "../src/layers/SurfaceTileLayer";
+import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
@@ -170,31 +170,37 @@ interface ProfileMetrics {
   cameraAltitude: number;
 }
 
-function snapshotSurfaceStats(layer: SurfaceTileLayer): SurfaceStatsSnapshot {
-  const stats = layer.getDebugStats();
+function snapshotSurfaceStats(
+  terrain: TerrainTileLayer,
+  rasterSource: RasterTileSource
+): SurfaceStatsSnapshot {
+  const terrainStats = terrain.getDebugStats();
+  const rasterStats = rasterSource.getStats();
   return {
-    imageryRequested: stats.imagery.requested,
-    imageryCancelled: stats.imagery.cancelled,
-    elevationRequested: stats.elevation.requested,
-    elevationCancelled: stats.elevation.cancelled
+    imageryRequested: rasterStats.requested,
+    imageryCancelled: rasterStats.cancelled,
+    elevationRequested: terrainStats.elevation.requested,
+    elevationCancelled: terrainStats.elevation.cancelled
   };
 }
 
 function collectProfileMetrics(
   engine: GlobeEngine,
-  layer: SurfaceTileLayer,
+  terrain: TerrainTileLayer,
+  rasterSource: RasterTileSource,
   snapshotBefore: SurfaceStatsSnapshot
 ): ProfileMetrics {
   const report = engine.getPerformanceReport();
-  const stats = layer.getDebugStats();
+  const terrainStats = terrain.getDebugStats();
+  const rasterStats = rasterSource.getStats();
 
   return {
     averageFPS: Number(Math.min(Math.max(report.averageFPS, 0), 1200).toFixed(2)),
     frameDrops: report.frameDrops,
-    imageryRequested: stats.imagery.requested - snapshotBefore.imageryRequested,
-    imageryCancelled: stats.imagery.cancelled - snapshotBefore.imageryCancelled,
-    elevationRequested: stats.elevation.requested - snapshotBefore.elevationRequested,
-    elevationCancelled: stats.elevation.cancelled - snapshotBefore.elevationCancelled,
+    imageryRequested: rasterStats.requested - snapshotBefore.imageryRequested,
+    imageryCancelled: rasterStats.cancelled - snapshotBefore.imageryCancelled,
+    elevationRequested: terrainStats.elevation.requested - snapshotBefore.elevationRequested,
+    elevationCancelled: terrainStats.elevation.cancelled - snapshotBefore.elevationCancelled,
     renderCount: report.metrics.get("renderCount")?.value ?? 0,
     layerCount: report.metrics.get("layerCount")?.value ?? 0,
     sceneObjectCount: report.metrics.get("sceneObjectCount")?.value ?? 0,
@@ -234,24 +240,38 @@ export function runBasicGlobeLoadProfileRegression(
     radius: 1,
     background: "#020611"
   });
-  const surfaceTiles = new SurfaceTileLayer("basic-globe-load-profile-regression", {
-    minZoom: 2,
-    maxZoom: 10,
-    tileSize: 128,
+  const terrain = new TerrainTileLayer("basic-globe-load-profile-regression", {
+    terrain: {
+      tiles: ["memory://{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 2,
+      maxZoom: 10,
+      tileSize: 128,
+      cache: 96,
+    },
     meshSegments: 3,
     skirtDepthMeters: 900,
     elevationExaggeration: 1,
     zoomExaggerationBoost: 1.8,
     selectTiles: ({ camera, radius }) => selectDeterministicTiles({ camera, radius }),
-    loadImageryTile: async (coordinate, signal?: AbortSignal) =>
+    loadElevationTile: async (coordinate, signal?: AbortSignal) =>
+      delayValue(18, () => createElevationTile(coordinate), signal)
+  });
+  const rasterSourceId = "basic-profile-imagery";
+  const rasterSource = new RasterTileSource(rasterSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    tileSize: 128,
+    cache: 96,
+    concurrency: 6,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(
         26 + ((coordinate.x + coordinate.y + coordinate.z) % 4) * 20,
         () => createImageryTile(coordinate),
         signal
-      ),
-    loadElevationTile: async (coordinate, signal?: AbortSignal) =>
-      delayValue(18, () => createElevationTile(coordinate), signal)
+      )
   });
+  engine.addSource(rasterSourceId, rasterSource);
+  const rasterLayer = new RasterLayer({ id: "basic-profile-imagery", source: rasterSourceId });
 
   let frameLoopStopped = false;
 
@@ -267,7 +287,7 @@ export function runBasicGlobeLoadProfileRegression(
   const handleError = (error: unknown): void => {
     frameLoopStopped = true;
     container.dataset.phase = "error";
-    output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+    output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   };
 
   const addStressOverlays = (): void => {
@@ -349,29 +369,29 @@ export function runBasicGlobeLoadProfileRegression(
 
   const finalize = async (): Promise<void> => {
     try {
-      await surfaceTiles.ready();
-      const beforeTiles = surfaceTiles.getActiveTileKeys().join(",");
+      await terrain.ready();
+      const beforeTiles = terrain.getActiveTileKeys().join(",");
       container.dataset.beforeTiles = beforeTiles;
       container.dataset.phase = "baseline-profile";
       output.textContent = `baseline-profile:${beforeTiles || "none"}`;
 
-      const baselineStatsBefore = snapshotSurfaceStats(surfaceTiles);
+      const baselineStatsBefore = snapshotSurfaceStats(terrain, rasterSource);
       engine.resetPerformanceReport();
       await runViewSequence(engine, [
         { lng: 96, lat: 24, altitude: 2.55, waitMs: 90 },
         { lng: 60, lat: 18, altitude: 2.35, waitMs: 90 },
         { lng: 30, lat: 26, altitude: 2.2, waitMs: 110 }
       ]);
-      await surfaceTiles.ready();
+      await terrain.ready();
       await sleep(150);
-      const baselineMetrics = collectProfileMetrics(engine, surfaceTiles, baselineStatsBefore);
-      const baselineAfterTiles = surfaceTiles.getActiveTileKeys().join(",");
+      const baselineMetrics = collectProfileMetrics(engine, terrain, rasterSource, baselineStatsBefore);
+      const baselineAfterTiles = terrain.getActiveTileKeys().join(",");
 
       addStressOverlays();
       container.dataset.phase = "stress-profile";
       output.textContent = `stress-profile:${baselineAfterTiles || "none"}`;
 
-      const stressStatsBefore = snapshotSurfaceStats(surfaceTiles);
+      const stressStatsBefore = snapshotSurfaceStats(terrain, rasterSource);
       engine.resetPerformanceReport();
       await runViewSequence(engine, [
         { lng: 18, lat: 30, altitude: 1.95, waitMs: 70 },
@@ -379,10 +399,10 @@ export function runBasicGlobeLoadProfileRegression(
         { lng: 72, lat: 14, altitude: 1.15, waitMs: 70 },
         { lng: 128, lat: 24, altitude: 1.1, waitMs: 90 }
       ]);
-      await surfaceTiles.ready();
+      await terrain.ready();
       await sleep(200);
-      const stressMetrics = collectProfileMetrics(engine, surfaceTiles, stressStatsBefore);
-      const stressAfterTiles = surfaceTiles.getActiveTileKeys().join(",");
+      const stressMetrics = collectProfileMetrics(engine, terrain, rasterSource, stressStatsBefore);
+      const stressAfterTiles = terrain.getActiveTileKeys().join(",");
 
       const fpsRatio =
         baselineMetrics.averageFPS > 0 && stressMetrics.averageFPS > 0
@@ -398,8 +418,8 @@ export function runBasicGlobeLoadProfileRegression(
       const imageryRequestedDelta = stressMetrics.imageryRequested - baselineMetrics.imageryRequested;
 
       const allExpected = Number(
-        baselineMetrics.layerCount === 1 &&
-          stressMetrics.layerCount >= 4 &&
+        baselineMetrics.layerCount === 2 &&
+          stressMetrics.layerCount >= 5 &&
           Number.isFinite(fpsRatio) &&
           fpsRatio > 0 &&
           sceneObjectDelta > 0
@@ -471,9 +491,10 @@ export function runBasicGlobeLoadProfileRegression(
   container.dataset.polylineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.allExpected = "";
-  output.textContent = "booting:basic-globe-load-profile-regression";
+  output.textContent = "启动中:basic-globe-load-profile-regression";
 
-  engine.addLayer(surfaceTiles);
+  engine.addLayer(terrain);
+  engine.addLayer(rasterLayer);
   engine.setView({ lng: 110, lat: 28, altitude: 2.8 });
   window.requestAnimationFrame(frameLoop);
   void finalize();
@@ -483,12 +504,14 @@ export function runBasicGlobeLoadProfileRegression(
       window as Window & {
         __basicGlobeLoadProfileRegression?: {
           engine: GlobeEngine;
-          surfaceTiles: SurfaceTileLayer;
+          terrain: TerrainTileLayer;
+          raster: RasterLayer;
         };
       }
     ).__basicGlobeLoadProfileRegression = {
       engine,
-      surfaceTiles
+      terrain,
+      raster: rasterLayer
     };
   }
 
@@ -503,9 +526,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:basic-globe-load-profile-regression</div>
+      <div class="demo-status" id="status-output">启动中:basic-globe-load-profile-regression</div>
     </main>
   `;
 

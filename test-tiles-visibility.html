@@ -16,7 +16,7 @@
 <body>
   <div id="info">Testing tiles visibility...</div>
   <script type="module">
-    import { GlobeEngine, SurfaceTileLayer } from './src/index.ts';
+    import { GlobeEngine, TerrainTileLayer, RasterTileSource, RasterLayer } from './src/index.ts';
     
     const container = document.body;
     const info = document.getElementById('info');
@@ -24,17 +24,32 @@
     // Create engine
     const engine = new GlobeEngine({ container, radius: 1 });
     
-    // Create surface tile layer with Gaode satellite imagery
-    const surfaceTiles = new SurfaceTileLayer('surface-tiles', {
-      minZoom: 3,
-      maxZoom: 11,
-      tileSize: 256,
+    // Terrain host (flat for this debug page: extraBounds=[] disables DEM requests)
+    const terrain = new TerrainTileLayer('terrain', {
+      terrain: {
+        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+        encode: 'terrarium',
+        minZoom: 3,
+        maxZoom: 11,
+        tileSize: 256,
+        cache: 96,
+        extraBounds: []
+      },
       meshSegments: 16,
-      elevationExaggeration: 0, // Flat earth for testing
-      imageryTemplateUrl: 'https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'
+      skirtDepthMeters: 800,
     });
+
+    const imagerySource = new RasterTileSource('gaode-satellite', {
+      tiles: ['https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'],
+      tileSize: 256,
+      cache: 256,
+      concurrency: 8
+    });
+    engine.addSource('gaode-satellite', imagerySource);
+    const imageryLayer = new RasterLayer({ id: 'gaode-satellite', source: 'gaode-satellite' });
     
-    engine.addLayer(surfaceTiles);
+    engine.addLayer(terrain);
+    engine.addLayer(imageryLayer);
     
     // Set initial view (Shanghai area)
     engine.setView({ lng: 121.47, lat: 31.23, altitude: 2.0 });
@@ -42,7 +57,7 @@
     // Wait for tiles to load
     let tileCount = 0;
     setInterval(() => {
-      const tiles = surfaceTiles.getActiveTileKeys();
+      const tiles = terrain.getActiveTileKeys();
       if (tiles.length !== tileCount) {
         tileCount = tiles.length;
         info.textContent = `Loaded ${tileCount} tiles | Keys: ${tiles.join(', ')}`;
@@ -52,7 +67,8 @@
     
     // Expose for debugging
     window.__engine = engine;
-    window.__tiles = surfaceTiles;
+    window.__terrain = terrain;
+    window.__raster = imageryLayer;
   </script>
 </body>
 </html>

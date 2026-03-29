@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, SurfaceTileLayer } from "../src";
-import type { ElevationTileData } from "../src/layers/SurfaceTileLayer";
+import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
@@ -158,24 +158,38 @@ export function runBasicGlobePerformanceRegression(
     radius: 1,
     background: "#020611"
   });
-  const surfaceTiles = new SurfaceTileLayer("basic-globe-performance-regression", {
-    minZoom: 2,
-    maxZoom: 10,
-    tileSize: 128,
+  const terrain = new TerrainTileLayer("basic-globe-performance-regression", {
+    terrain: {
+      tiles: ["memory://{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 2,
+      maxZoom: 10,
+      tileSize: 128,
+      cache: 96,
+    },
     meshSegments: 3,
     skirtDepthMeters: 900,
     elevationExaggeration: 1,
     zoomExaggerationBoost: 1.8,
     selectTiles: ({ camera, radius }) => selectDeterministicTiles({ camera, radius }),
-    loadImageryTile: async (coordinate, signal?: AbortSignal) =>
+    loadElevationTile: async (coordinate, signal?: AbortSignal) =>
+      delayValue(16, () => createElevationTile(coordinate), signal)
+  });
+  const rasterSourceId = "basic-performance-imagery";
+  const rasterSource = new RasterTileSource(rasterSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    tileSize: 128,
+    cache: 96,
+    concurrency: 6,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(
         24 + ((coordinate.x + coordinate.y + coordinate.z) % 4) * 16,
         () => createImageryTile(coordinate),
         signal
-      ),
-    loadElevationTile: async (coordinate, signal?: AbortSignal) =>
-      delayValue(16, () => createElevationTile(coordinate), signal)
+      )
   });
+  engine.addSource(rasterSourceId, rasterSource);
+  const rasterLayer = new RasterLayer({ id: "basic-performance-imagery", source: rasterSourceId });
 
   let frameLoopStopped = false;
 
@@ -191,17 +205,18 @@ export function runBasicGlobePerformanceRegression(
   const handleError = (error: unknown): void => {
     frameLoopStopped = true;
     container.dataset.phase = "error";
-    output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+    output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   };
 
   const finalize = (): void => {
     frameLoopStopped = true;
     const report = engine.getPerformanceReport();
-    const stats = surfaceTiles.getDebugStats();
+    const terrainStats = terrain.getDebugStats();
+    const rasterStats = rasterSource.getStats();
       const averageFPS = Number(Math.min(Math.max(report.averageFPS, 0), 1200).toFixed(2));
     const frameTime = Number(report.frameTime.toFixed(2));
-    const imageryCancelRatio = stats.imagery.requested > 0
-      ? Number((stats.imagery.cancelled / stats.imagery.requested).toFixed(4))
+    const imageryCancelRatio = rasterStats.requested > 0
+      ? Number((rasterStats.cancelled / rasterStats.requested).toFixed(4))
       : 0;
     const renderCount = report.metrics.get("renderCount")?.value ?? 0;
     const layerCount = report.metrics.get("layerCount")?.value ?? 0;
@@ -209,14 +224,14 @@ export function runBasicGlobePerformanceRegression(
     const cameraAltitude = report.metrics.get("cameraAltitude")?.value ?? 0;
 
     container.dataset.phase = "after-basic-performance";
-    container.dataset.afterTiles = surfaceTiles.getActiveTileKeys().join(",");
+    container.dataset.afterTiles = terrain.getActiveTileKeys().join(",");
     container.dataset.averageFps = `${averageFPS}`;
     container.dataset.frameTime = `${frameTime}`;
     container.dataset.frameDrops = `${report.frameDrops}`;
-    container.dataset.imageryRequested = `${stats.imagery.requested}`;
-    container.dataset.imageryCancelled = `${stats.imagery.cancelled}`;
-    container.dataset.elevationRequested = `${stats.elevation.requested}`;
-    container.dataset.elevationCancelled = `${stats.elevation.cancelled}`;
+    container.dataset.imageryRequested = `${rasterStats.requested}`;
+    container.dataset.imageryCancelled = `${rasterStats.cancelled}`;
+    container.dataset.elevationRequested = `${terrainStats.elevation.requested}`;
+    container.dataset.elevationCancelled = `${terrainStats.elevation.cancelled}`;
     container.dataset.imageryCancelRatio = `${imageryCancelRatio}`;
     container.dataset.renderCount = `${renderCount}`;
     container.dataset.layerCount = `${layerCount}`;
@@ -248,9 +263,10 @@ export function runBasicGlobePerformanceRegression(
   container.dataset.polylineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.usedJsHeapSize = "";
-  output.textContent = "booting:basic-globe-performance-regression";
+  output.textContent = "启动中:basic-globe-performance-regression";
 
-  engine.addLayer(surfaceTiles);
+  engine.addLayer(terrain);
+  engine.addLayer(rasterLayer);
 
   engine.addMarker({
     id: "marker-shanghai",
@@ -313,9 +329,9 @@ export function runBasicGlobePerformanceRegression(
   engine.setView({ lng: 110, lat: 28, altitude: 2.8 });
   window.requestAnimationFrame(frameLoop);
 
-  void surfaceTiles.ready()
+  void terrain.ready()
     .then(() => {
-      container.dataset.beforeTiles = surfaceTiles.getActiveTileKeys().join(",");
+      container.dataset.beforeTiles = terrain.getActiveTileKeys().join(",");
       container.dataset.phase = "before-tour";
       output.textContent = `before-tour:${container.dataset.beforeTiles || "none"}`;
       engine.resetPerformanceReport();
@@ -332,9 +348,9 @@ export function runBasicGlobePerformanceRegression(
             container.dataset.phase = "tour-step-3";
             engine.setView({ lng: 70, lat: 14, altitude: 1.15 });
 
-            void surfaceTiles.ready()
+            void terrain.ready()
               .then(() => {
-                output.textContent = `settling:${surfaceTiles.getActiveTileKeys().join(",") || "none"}`;
+                output.textContent = `settling:${terrain.getActiveTileKeys().join(",") || "none"}`;
                 window.setTimeout(finalize, 180);
               })
               .catch(handleError);
@@ -349,12 +365,14 @@ export function runBasicGlobePerformanceRegression(
       window as Window & {
         __basicGlobePerformanceRegression?: {
           engine: GlobeEngine;
-          surfaceTiles: SurfaceTileLayer;
+          terrain: TerrainTileLayer;
+          raster: RasterLayer;
         };
       }
     ).__basicGlobePerformanceRegression = {
       engine,
-      surfaceTiles
+      terrain,
+      raster: rasterLayer
     };
   }
 
@@ -369,9 +387,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:basic-globe-performance-regression</div>
+      <div class="demo-status" id="status-output">启动中:basic-globe-performance-regression</div>
     </main>
   `;
 

@@ -1,9 +1,9 @@
 import { CanvasTexture } from "three";
 import {
   GlobeEngine,
-  ElevationLayer,
-  ImageryLayer,
-  SurfaceTileLayer,
+  TerrainTileLayer,
+  RasterTileSource,
+  RasterLayer,
   AnimationManager,
   haversineDistance
 } from "../src";
@@ -140,21 +140,41 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   const engine = new GlobeEngine({
     container,
     radius: 1,
+    showBaseGlobe: true,
     background: "#020611",
   });
 
   /* ---- tile layers ---- */
-  const baseElevation = new ElevationLayer("elevation-tiles",  { zoom: 3, tileSize: 256, cacheSize: 24, concurrency: 4, exaggeration: 1 });
-  const surfaceTiles  = new SurfaceTileLayer("surface-tiles",   { minZoom: 3, maxZoom: 11, tileSize: 128, meshSegments: 16, cacheSize: 96, concurrency: 6, elevationExaggeration: 1, zoomExaggerationBoost: 6, textureUvInsetPixels: 1, skirtDepthMeters: 1400 });
-
-  engine.addLayer(baseElevation);
-  engine.addLayer(surfaceTiles);
-
-  baseElevation.ready().catch(() => {
-    output.textContent = "Elevation tiles use fallback";
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 3,
+      maxZoom: 11,
+      tileSize: 128,
+      cache: 96,
+    },
+    meshSegments: 16,
+    concurrency: 6,
+    elevationExaggeration: 1,
+    zoomExaggerationBoost: 6,
+    textureUvInsetPixels: 1,
+    skirtDepthMeters: 1400
   });
-  surfaceTiles.ready().catch(() => {
-    output.textContent = "Surface tiles use fallback";
+  const imagerySource = new RasterTileSource("osm", {
+    tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+    tileSize: 128,
+    cache: 96,
+    concurrency: 6
+  });
+  engine.addSource("osm", imagerySource);
+  const imageryLayer = new RasterLayer({ id: "osm", source: "osm" });
+
+  engine.addLayer(terrain);
+  engine.addLayer(imageryLayer);
+
+  terrain.ready().catch(() => {
+    output.textContent = "Terrain tiles use fallback";
   });
 
   /* ---- markers ---- */
@@ -230,7 +250,7 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
 
   /* ---- click handler ---- */
   engine.on("click", ({ pickResult: result }) => {
-    if (!result) { output.textContent = "Nothing picked"; return; }
+    if (!result) { output.textContent = "未拾取到任何对象"; return; }
     if (result.type === "marker")  { output.textContent = `marker: ${result.marker.id}`; return; }
     if (result.type === "polyline") { output.textContent = `polyline: ${result.polyline.id}`; return; }
     if (result.type === "polygon")  { output.textContent = `polygon: ${result.polygon.id}`; return; }
@@ -246,10 +266,10 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
       output.textContent = `lng:${result.cartographic.lng.toFixed(2)} lat:${result.cartographic.lat.toFixed(2)}`;
       return;
     }
-    output.textContent = "Unsupported pick result";
+    output.textContent = "不支持的拾取结果";
   });
 
-  output.textContent = "Loading globe – drag to orbit, wheel to zoom, click to inspect.";
+  output.textContent = "正在加载地球：拖拽旋转；Ctrl+上拖或双指上推倾斜；滚轮缩放；点击查看拾取信息。";
 
   /* ---- performance loop ---- */
   let lastTime = performance.now();

@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, SurfaceTileLayer } from "../src";
-import type { ElevationTileData } from "../src/layers/SurfaceTileLayer";
+import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function createFlatElevationTile(): ElevationTileData {
@@ -45,9 +45,15 @@ export function runSurfaceTileRegression(
     radius: 1,
     background: "#020611",
   });
-  const surfaceTiles = new SurfaceTileLayer("surface-tile-regression", {
-    minZoom: 1,
-    maxZoom: 6,
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["memory://{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 1,
+      maxZoom: 6,
+      tileSize: 256,
+      cache: 16,
+    },
     meshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
@@ -55,12 +61,11 @@ export function runSurfaceTileRegression(
       zoom: 2,
       coordinates: selectedTiles,
     }),
-    loadImageryTile: async (coordinate) => createImageryTile(coordinate),
     loadElevationTile: async () => createFlatElevationTile(),
   });
 
   const syncStatus = (phase: string): void => {
-    const activeTiles = surfaceTiles.getActiveTileKeys().join(",");
+    const activeTiles = terrain.getActiveTileKeys().join(",");
     container.dataset.phase = phase;
     container.dataset.activeTiles = activeTiles;
     container.dataset.surfaceTiles = "ready";
@@ -70,12 +75,22 @@ export function runSurfaceTileRegression(
   container.dataset.phase = "booting";
   container.dataset.surfaceTiles = "loading";
   container.dataset.activeTiles = "";
-  output.textContent = "booting:surface-tile-regression";
+  output.textContent = "启动中:surface-tile-regression";
 
-  engine.addLayer(surfaceTiles);
+  const rasterSource = new RasterTileSource("raster", {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    cache: 16,
+    concurrency: 2,
+    loadTile: async (coordinate) => createImageryTile(coordinate),
+  });
+  engine.addSource("raster", rasterSource);
+  const rasterLayer = new RasterLayer({ id: "raster-layer", source: "raster" });
+
+  engine.addLayer(terrain);
+  engine.addLayer(rasterLayer);
   engine.setView({ lng: 0, lat: 20, altitude: 2.4 });
 
-  void surfaceTiles
+  void terrain
     .ready()
     .then(() => {
       syncStatus("initial");
@@ -85,7 +100,7 @@ export function runSurfaceTileRegression(
         container.dataset.phase = "switching";
         engine.render();
 
-        void surfaceTiles
+        void terrain
           .ready()
           .then(() => {
             syncStatus("after-switch");
@@ -94,24 +109,25 @@ export function runSurfaceTileRegression(
             container.dataset.phase = "error";
             container.dataset.surfaceTiles = "error";
             output.textContent =
-              error instanceof Error ? `error:${error.message}` : "error:unknown";
+              error instanceof Error ? `错误:${error.message}` : "错误:未知";
           });
       }, 150);
     })
     .catch((error: unknown) => {
       container.dataset.phase = "error";
       container.dataset.surfaceTiles = "error";
-      output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+      output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
     });
 
   if (typeof window !== "undefined") {
     (
       window as Window & {
-        __surfaceTileRegression?: { engine: GlobeEngine; surfaceTiles: SurfaceTileLayer };
+        __surfaceTileRegression?: { engine: GlobeEngine; terrain: TerrainTileLayer; raster: RasterLayer };
       }
     ).__surfaceTileRegression = {
       engine,
-      surfaceTiles,
+      terrain,
+      raster: rasterLayer,
     };
   }
 
@@ -126,9 +142,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage"></div>
-      <div class="demo-status" id="status-output">booting:surface-tile-regression</div>
+      <div class="demo-status" id="status-output">启动中:surface-tile-regression</div>
     </main>
   `;
 

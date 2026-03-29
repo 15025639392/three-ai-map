@@ -48,9 +48,10 @@ function createTimedMouseEvent(
   type: "mousedown" | "mousemove" | "mouseup",
   clientX: number,
   clientY: number,
-  timeStamp: number
+  timeStamp: number,
+  options: MouseEventInit = {}
 ): MouseEvent {
-  const event = new MouseEvent(type, { clientX, clientY });
+  const event = new MouseEvent(type, { clientX, clientY, ...options });
   Object.defineProperty(event, "timeStamp", { value: timeStamp });
   return event;
 }
@@ -59,6 +60,24 @@ function createTimedWheelEvent(deltaY: number, timeStamp: number): WheelEvent {
   const event = new WheelEvent("wheel", { deltaY });
   Object.defineProperty(event, "timeStamp", { value: timeStamp });
   return event;
+}
+
+function createTimedTouchEvent(
+  type: "touchstart" | "touchmove" | "touchend" | "touchcancel",
+  touches: Array<{ clientX: number; clientY: number }>,
+  timeStamp: number
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "touches", { value: touches });
+  Object.defineProperty(event, "timeStamp", { value: timeStamp });
+  return event;
+}
+
+function getTiltRadians(camera: PerspectiveCamera): number {
+  const inwardDirection = camera.position.clone().normalize().multiplyScalar(-1);
+  const lookDirection = new Vector3();
+  camera.getWorldDirection(lookDirection);
+  return inwardDirection.angleTo(lookDirection);
 }
 
 function installAnimationFrameMock() {
@@ -133,6 +152,99 @@ describe("CameraController", () => {
 
     expect(after.x).toBeGreaterThan(before.x);
     expect(after.y).toBeGreaterThan(before.y);
+  });
+
+  it("tilts camera when control-dragging upward on desktop", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+
+    controller.setView({ lng: 0, lat: 20, altitude: 2 });
+    controller.update();
+    const beforeTilt = getTiltRadians(camera);
+    const beforeView = controller.getView();
+
+    element.dispatchEvent(createTimedMouseEvent("mousedown", 200, 240, 100, { ctrlKey: true }));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", 200, 160, 116, { ctrlKey: true }));
+    window.dispatchEvent(createTimedMouseEvent("mouseup", 200, 160, 120));
+    controller.update();
+
+    const afterTilt = getTiltRadians(camera);
+    const afterView = controller.getView();
+
+    expect(afterTilt).toBeGreaterThan(beforeTilt + 0.05);
+    expect(afterView.lng).toBeCloseTo(beforeView.lng, 4);
+    expect(afterView.lat).toBeCloseTo(beforeView.lat, 4);
+    expect(afterView.altitude).toBeCloseTo(beforeView.altitude, 4);
+  });
+
+  it("tilts camera when two-finger touch moves upward on mobile", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+
+    controller.setView({ lng: 0, lat: 20, altitude: 2 });
+    controller.update();
+    const beforeTilt = getTiltRadians(camera);
+
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchstart",
+        [
+          { clientX: 160, clientY: 240 },
+          { clientX: 240, clientY: 240 }
+        ],
+        100
+      )
+    );
+    element.dispatchEvent(
+      createTimedTouchEvent(
+        "touchmove",
+        [
+          { clientX: 160, clientY: 170 },
+          { clientX: 240, clientY: 170 }
+        ],
+        116
+      )
+    );
+    element.dispatchEvent(createTimedTouchEvent("touchend", [], 120));
+    controller.update();
+
+    const afterTilt = getTiltRadians(camera);
+    expect(afterTilt).toBeGreaterThan(beforeTilt + 0.05);
+  });
+
+  it("resets tilt when setView is called", () => {
+    const element = createViewportElement();
+    const camera = new PerspectiveCamera(45, 1, 0.1, 1000);
+    const controller = new CameraController({
+      camera,
+      element,
+      globeRadius: 1
+    });
+
+    controller.setView({ lng: 0, lat: 20, altitude: 2 });
+    controller.update();
+
+    element.dispatchEvent(createTimedMouseEvent("mousedown", 200, 240, 100, { ctrlKey: true }));
+    window.dispatchEvent(createTimedMouseEvent("mousemove", 200, 160, 116, { ctrlKey: true }));
+    window.dispatchEvent(createTimedMouseEvent("mouseup", 200, 160, 120));
+    controller.update();
+
+    expect(getTiltRadians(camera)).toBeGreaterThan(0.05);
+
+    controller.setView({ lng: 10, lat: 30, altitude: 2.2 });
+    controller.update();
+
+    expect(getTiltRadians(camera)).toBeLessThan(0.001);
   });
 
   it("does not keep rotating when the pointer position stops changing", () => {

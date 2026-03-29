@@ -1,6 +1,8 @@
 import {
   GlobeEngine,
-  SurfaceTileLayer,
+  TerrainTileLayer,
+  RasterTileSource,
+  RasterLayer,
   wgs84ToGcj02,
   wgs84ToBd09,
 } from "../src";
@@ -47,7 +49,7 @@ export const BAIDU_URLS = {
 } as const;
 
 /**
- * Standard OSM tile source (default in SurfaceTileLayer).
+ * Standard OSM XYZ raster tiles.
  */
 export const OSM_URL =
   "https://tile.openstreetmap.org/{z}/{x}/{y}.png" as const;
@@ -69,27 +71,42 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
     background: "#020611",
   });
 
-  const surfaceTiles = new SurfaceTileLayer("gaode-satellite", {
-    minZoom: 3,
-    maxZoom: 18,
-    tileSize: 256,
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 3,
+      maxZoom: 14,
+      tileSize: 256,
+      cache: 128,
+      extraBounds: [] // Disable DEM outside configured bounds (Gaode imagery only).
+    },
     meshSegments: 16,
-    cacheSize: 128,
     concurrency: 6,
-    imageryTemplateUrl: GAODE_URLS.satellite,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
     skirtDepthMeters: 500,
   });
+  const imagerySource = new RasterTileSource("gaode-satellite", {
+    tiles: [GAODE_URLS.satellite],
+    tileSize: 256,
+    cache: 128,
+    maxZoom: 18,
+    minZoom: 3,
+    concurrency: 6
+  });
+  engine.addSource("gaode-satellite", imagerySource);
+  const imageryLayer = new RasterLayer({ id: "gaode-satellite", source: "gaode-satellite",zIndex: 100 });
 
-  engine.addLayer(surfaceTiles);
+  engine.addLayer(terrain);
+  engine.addLayer(imageryLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 }); // center of China
 
-  surfaceTiles.ready().then(
+  terrain.ready().then(
     () => { if (output) output.textContent = "Gaode satellite tiles loaded"; },
     () => { if (output) output.textContent = "Gaode satellite tiles failed – check network"; },
   );
 
-  if (output) output.textContent = "Loading Gaode satellite...";
+  if (output) output.textContent = "正在加载高德卫星...";
 
   return engine;
 }
@@ -100,7 +117,7 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
 
 /**
  * Launch a globe using Gaode satellite imagery with road/label overlay.
- * Two SurfaceTileLayer instances: satellite base + transparent label overlay.
+ * Two RasterLayer overlays: satellite base + transparent label overlay.
  */
 export function runGaodeSatelliteLabels(container: HTMLElement, output?: HTMLElement): GlobeEngine {
   const engine = new GlobeEngine({
@@ -109,39 +126,49 @@ export function runGaodeSatelliteLabels(container: HTMLElement, output?: HTMLEle
     background: "#020611",
   });
 
-  const satelliteBase = new SurfaceTileLayer("gaode-satellite-base", {
-    minZoom: 3,
-    maxZoom: 18,
-    tileSize: 256,
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 3,
+      maxZoom: 18,
+      tileSize: 256,
+      cache: 128,
+      extraBounds: []
+    },
     meshSegments: 16,
-    cacheSize: 128,
     concurrency: 6,
-    imageryTemplateUrl: GAODE_URLS.satellite,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
     skirtDepthMeters: 500,
   });
 
-  const labelOverlay = new SurfaceTileLayer("gaode-satellite-labels", {
-    minZoom: 3,
-    maxZoom: 18,
+  const satelliteSource = new RasterTileSource("gaode-satellite-base", {
+    tiles: [GAODE_URLS.satellite],
     tileSize: 256,
-    meshSegments: 16,
-    cacheSize: 128,
-    concurrency: 4,
-    imageryTemplateUrl: GAODE_URLS.labels,
-    coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
-    skirtDepthMeters: 500,
+    cache: 128,
+    concurrency: 6
   });
+  const labelSource = new RasterTileSource("gaode-satellite-labels", {
+    tiles: [GAODE_URLS.labels],
+    tileSize: 256,
+    cache: 128,
+    concurrency: 4
+  });
+  engine.addSource("gaode-satellite-base", satelliteSource);
+  engine.addSource("gaode-satellite-labels", labelSource);
+  const satelliteLayer = new RasterLayer({ id: "gaode-satellite-base", source: "gaode-satellite-base" });
+  const labelLayer = new RasterLayer({ id: "gaode-satellite-labels", source: "gaode-satellite-labels" });
 
-  engine.addLayer(satelliteBase);
-  engine.addLayer(labelOverlay);
+  engine.addLayer(terrain);
+  engine.addLayer(satelliteLayer);
+  engine.addLayer(labelLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 });
 
-  Promise.allSettled([satelliteBase.ready(), labelOverlay.ready()]).then(() => {
+  Promise.allSettled([terrain.ready()]).then(() => {
     if (output) output.textContent = "Gaode satellite + labels loaded";
   });
 
-  if (output) output.textContent = "Loading Gaode satellite + labels...";
+  if (output) output.textContent = "正在加载高德卫星 + 标注...";
 
   return engine;
 }
@@ -160,27 +187,40 @@ export function runGaodeRoad(container: HTMLElement, output?: HTMLElement): Glob
     background: "#f0ede8",
   });
 
-  const surfaceTiles = new SurfaceTileLayer("gaode-road", {
-    minZoom: 3,
-    maxZoom: 18,
-    tileSize: 256,
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 3,
+      maxZoom: 18,
+      tileSize: 256,
+      cache: 128,
+      extraBounds: []
+    },
     meshSegments: 16,
-    cacheSize: 128,
     concurrency: 6,
-    imageryTemplateUrl: GAODE_URLS.road,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
     skirtDepthMeters: 500,
   });
+  const imagerySource = new RasterTileSource("gaode-road", {
+    tiles: [GAODE_URLS.road],
+    tileSize: 256,
+    cache: 128,
+    concurrency: 6
+  });
+  engine.addSource("gaode-road", imagerySource);
+  const imageryLayer = new RasterLayer({ id: "gaode-road", source: "gaode-road" });
 
-  engine.addLayer(surfaceTiles);
+  engine.addLayer(terrain);
+  engine.addLayer(imageryLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 });
 
-  surfaceTiles.ready().then(
+  terrain.ready().then(
     () => { if (output) output.textContent = "Gaode road map loaded"; },
     () => { if (output) output.textContent = "Gaode road map failed – check network"; },
   );
 
-  if (output) output.textContent = "Loading Gaode road map...";
+  if (output) output.textContent = "正在加载高德道路底图...";
 
   return engine;
 }
@@ -202,27 +242,40 @@ export function runBaiduSatellite(container: HTMLElement, output?: HTMLElement):
     background: "#020611",
   });
 
-  const surfaceTiles = new SurfaceTileLayer("baidu-satellite", {
-    minZoom: 3,
-    maxZoom: 18,
-    tileSize: 256,
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 3,
+      maxZoom: 18,
+      tileSize: 256,
+      cache: 128,
+      extraBounds: []
+    },
     meshSegments: 16,
-    cacheSize: 128,
     concurrency: 6,
-    imageryTemplateUrl: BAIDU_URLS.satellite,
     coordTransform: (lng, lat) => wgs84ToBd09({ lng, lat }),
     skirtDepthMeters: 500,
   });
+  const imagerySource = new RasterTileSource("baidu-satellite", {
+    tiles: [BAIDU_URLS.satellite],
+    tileSize: 256,
+    cache: 128,
+    concurrency: 6
+  });
+  engine.addSource("baidu-satellite", imagerySource);
+  const imageryLayer = new RasterLayer({ id: "baidu-satellite", source: "baidu-satellite" });
 
-  engine.addLayer(surfaceTiles);
+  engine.addLayer(terrain);
+  engine.addLayer(imageryLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 });
 
-  surfaceTiles.ready().then(
+  terrain.ready().then(
     () => { if (output) output.textContent = "Baidu satellite tiles loaded"; },
     () => { if (output) output.textContent = "Baidu satellite tiles failed – check network"; },
   );
 
-  if (output) output.textContent = "Loading Baidu satellite...";
+  if (output) output.textContent = "正在加载百度卫星...";
 
   return engine;
 }
@@ -241,27 +294,40 @@ export function runBaiduRoad(container: HTMLElement, output?: HTMLElement): Glob
     background: "#f0ede8",
   });
 
-  const surfaceTiles = new SurfaceTileLayer("baidu-road", {
-    minZoom: 3,
-    maxZoom: 18,
-    tileSize: 256,
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 3,
+      maxZoom: 18,
+      tileSize: 256,
+      cache: 128,
+      extraBounds: []
+    },
     meshSegments: 16,
-    cacheSize: 128,
     concurrency: 6,
-    imageryTemplateUrl: BAIDU_URLS.road,
     coordTransform: (lng, lat) => wgs84ToBd09({ lng, lat }),
     skirtDepthMeters: 500,
   });
+  const imagerySource = new RasterTileSource("baidu-road", {
+    tiles: [BAIDU_URLS.road],
+    tileSize: 256,
+    cache: 128,
+    concurrency: 6
+  });
+  engine.addSource("baidu-road", imagerySource);
+  const imageryLayer = new RasterLayer({ id: "baidu-road", source: "baidu-road" });
 
-  engine.addLayer(surfaceTiles);
+  engine.addLayer(terrain);
+  engine.addLayer(imageryLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 });
 
-  surfaceTiles.ready().then(
+  terrain.ready().then(
     () => { if (output) output.textContent = "Baidu road map loaded"; },
     () => { if (output) output.textContent = "Baidu road map failed – check network"; },
   );
 
-  if (output) output.textContent = "Loading Baidu road map...";
+  if (output) output.textContent = "正在加载百度道路底图...";
 
   return engine;
 }

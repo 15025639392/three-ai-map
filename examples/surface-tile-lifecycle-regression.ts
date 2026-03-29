@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, SurfaceTileLayer } from "../src";
-import type { ElevationTileData } from "../src/layers/SurfaceTileLayer";
+import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
@@ -80,11 +80,16 @@ function createElevationTile(coordinate: TileCoordinate): ElevationTileData {
   return { width, height, data };
 }
 
-function createSurfaceLayer(layerId: string): SurfaceTileLayer {
-  return new SurfaceTileLayer(layerId, {
-    minZoom: 2,
-    maxZoom: 6,
-    tileSize: 128,
+function createTerrainLayer(layerId: string): TerrainTileLayer {
+  return new TerrainTileLayer(layerId, {
+    terrain: {
+      tiles: ["memory://{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 2,
+      maxZoom: 6,
+      tileSize: 128,
+      cache: 64,
+    },
     meshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
@@ -95,8 +100,6 @@ function createSurfaceLayer(layerId: string): SurfaceTileLayer {
         { z: 2, x: 3, y: 1 }
       ]
     }),
-    loadImageryTile: async (coordinate, signal?: AbortSignal) =>
-      delayValue(12 + ((coordinate.x + coordinate.y) % 2) * 8, () => createImageryTile(coordinate), signal),
     loadElevationTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(8, () => createElevationTile(coordinate), signal)
   });
@@ -115,12 +118,29 @@ export function runSurfaceTileLifecycleRegression(
     background: "#020611"
   });
 
-  let activeLayer = createSurfaceLayer(layerId);
+  const rasterSourceId = "lifecycle-raster";
+  const rasterSource = new RasterTileSource(rasterSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    tileSize: 128,
+    cache: 64,
+    concurrency: 4,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
+      delayValue(
+        12 + ((coordinate.x + coordinate.y) % 2) * 8,
+        () => createImageryTile(coordinate),
+        signal
+      )
+  });
+  engine.addSource(rasterSourceId, rasterSource);
+
+  let activeTerrain = createTerrainLayer(layerId);
+  const rasterLayer = new RasterLayer({ id: `${layerId}:raster`, source: rasterSourceId });
   let beforeTileKeys = "";
   let beforeTileCount = 0;
   let afterRemoveTileCount = 0;
   let afterRemoveGroupPresent = 1;
-  let afterRemoveGlobeVisible = 0;
+  let afterRemoveTerrainHostPresent = 1;
+  let afterRemoveGlobeVisible = 1;
   let frameLoopStopped = false;
 
   const frameLoop = (): void => {
@@ -134,16 +154,22 @@ export function runSurfaceTileLifecycleRegression(
   const handleError = (error: unknown): void => {
     frameLoopStopped = true;
     container.dataset.phase = "error";
-    output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+    output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   };
 
   const finalize = (): void => {
     frameLoopStopped = true;
-    const afterReAddTileKeys = activeLayer.getActiveTileKeys().join(",");
-    const afterReAddTileCount = activeLayer.getDebugStats().activeTileCount;
+    const afterReAddTileKeys = activeTerrain.getActiveTileKeys().join(",");
+    const afterReAddTileCount = activeTerrain.getDebugStats().activeTileCount;
     const tileKeysRestored = beforeTileKeys === afterReAddTileKeys ? 1 : 0;
     const removeCleared = afterRemoveTileCount === 0 && afterRemoveGroupPresent === 0 ? 1 : 0;
-    const allExpected = tileKeysRestored === 1 && removeCleared === 1 && afterRemoveGlobeVisible === 1 ? 1 : 0;
+    const allExpected =
+      tileKeysRestored === 1 &&
+      removeCleared === 1 &&
+      afterRemoveTerrainHostPresent === 0 &&
+      afterRemoveGlobeVisible === 1
+        ? 1
+        : 0;
 
     container.dataset.phase = "after-surface-lifecycle";
     container.dataset.beforeTileKeys = beforeTileKeys;
@@ -151,6 +177,7 @@ export function runSurfaceTileLifecycleRegression(
     container.dataset.afterRemoveTileCount = `${afterRemoveTileCount}`;
     container.dataset.afterRemoveGroupPresent = `${afterRemoveGroupPresent}`;
     container.dataset.afterRemoveGlobeVisible = `${afterRemoveGlobeVisible}`;
+    container.dataset.afterRemoveTerrainHostPresent = `${afterRemoveTerrainHostPresent}`;
     container.dataset.afterReAddTileKeys = afterReAddTileKeys;
     container.dataset.afterReAddTileCount = `${afterReAddTileCount}`;
     container.dataset.tileKeysRestored = `${tileKeysRestored}`;
@@ -165,38 +192,41 @@ export function runSurfaceTileLifecycleRegression(
   container.dataset.afterRemoveTileCount = "";
   container.dataset.afterRemoveGroupPresent = "";
   container.dataset.afterRemoveGlobeVisible = "";
+  container.dataset.afterRemoveTerrainHostPresent = "";
   container.dataset.afterReAddTileKeys = "";
   container.dataset.afterReAddTileCount = "";
   container.dataset.tileKeysRestored = "";
   container.dataset.removeCleared = "";
   container.dataset.allExpected = "";
-  output.textContent = "booting:surface-tile-lifecycle-regression";
+  output.textContent = "启动中:surface-tile-lifecycle-regression";
 
-  engine.addLayer(activeLayer);
+  engine.addLayer(activeTerrain);
+  engine.addLayer(rasterLayer);
   engine.setView({ lng: 6, lat: 26, altitude: 2.3 });
   window.requestAnimationFrame(frameLoop);
 
-  void activeLayer.ready()
+  void activeTerrain.ready()
     .then(() => {
-      beforeTileKeys = activeLayer.getActiveTileKeys().join(",");
-      beforeTileCount = activeLayer.getDebugStats().activeTileCount;
+      beforeTileKeys = activeTerrain.getActiveTileKeys().join(",");
+      beforeTileCount = activeTerrain.getDebugStats().activeTileCount;
       container.dataset.phase = "before-remove";
       output.textContent = `before-remove:${beforeTileKeys || "none"}`;
 
       engine.removeLayer(layerId);
-      afterRemoveTileCount = activeLayer.getDebugStats().activeTileCount;
+      afterRemoveTileCount = activeTerrain.getDebugStats().activeTileCount;
       afterRemoveGroupPresent = engine.sceneSystem.scene.getObjectByName(layerId) ? 1 : 0;
-      afterRemoveGlobeVisible = engine.globe.mesh.visible ? 1 : 0;
+      afterRemoveTerrainHostPresent = engine.sceneSystem.scene.getObjectByName(layerId) ? 1 : 0;
+      afterRemoveGlobeVisible = engine.globe.mesh.parent ? 1 : 0;
       container.dataset.phase = "after-remove";
       output.textContent = `after-remove:tiles=${afterRemoveTileCount}:group=${afterRemoveGroupPresent}`;
 
       window.setTimeout(() => {
-        activeLayer = createSurfaceLayer(layerId);
-        engine.addLayer(activeLayer);
+        activeTerrain = createTerrainLayer(layerId);
+        engine.addLayer(activeTerrain);
         container.dataset.phase = "after-readd";
         output.textContent = "after-readd:loading";
 
-        void activeLayer.ready()
+        void activeTerrain.ready()
           .then(() => {
             window.setTimeout(finalize, 120);
           })
@@ -210,12 +240,12 @@ export function runSurfaceTileLifecycleRegression(
       window as Window & {
         __surfaceTileLifecycleRegression?: {
           engine: GlobeEngine;
-          getLayer: () => SurfaceTileLayer;
+          getLayer: () => TerrainTileLayer;
         };
       }
     ).__surfaceTileLifecycleRegression = {
       engine,
-      getLayer: () => activeLayer
+      getLayer: () => activeTerrain
     };
   }
 
@@ -230,9 +260,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:surface-tile-lifecycle-regression</div>
+      <div class="demo-status" id="status-output">启动中:surface-tile-lifecycle-regression</div>
     </main>
   `;
 

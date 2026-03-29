@@ -167,7 +167,7 @@ export function runVectorTileRegression(container: HTMLElement, output: HTMLElem
   container.dataset.lineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.objectCount = "";
-  output.textContent = "booting:vector-tile-regression";
+  output.textContent = "启动中:vector-tile-regression";
 
   engine.addLayer(vectorLayer);
   engine.setView({ lng: 0, lat: 20, altitude: 2.4 });
@@ -190,7 +190,7 @@ export function runVectorTileRegression(container: HTMLElement, output: HTMLElem
     })
     .catch((error) => {
       container.dataset.phase = "error";
-      output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+      output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
     });
 
   if (typeof window !== "undefined") {
@@ -218,9 +218,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:vector-tile-regression</div>
+      <div class="demo-status" id="status-output">启动中:vector-tile-regression</div>
     </main>
   `;
 

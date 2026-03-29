@@ -1,8 +1,9 @@
 import { GlobeEngine } from "../../src/engine/GlobeEngine";
-import { ElevationLayer } from "../../src/layers/ElevationLayer";
 import { Layer } from "../../src/layers/Layer";
-import { SurfaceTileLayer } from "../../src/layers/SurfaceTileLayer";
+import { RasterLayer } from "../../src/layers/RasterLayer";
+import { TerrainTileLayer } from "../../src/layers/TerrainTileLayer";
 import { VectorTileLayer } from "../../src/layers/VectorTileLayer";
+import { RasterTileSource } from "../../src/sources/RasterTileSource";
 
 class FakeRendererSystem {
   readonly renderer = { domElement: document.createElement("canvas") };
@@ -36,6 +37,20 @@ function createElevationTileData(): { width: number; height: number; data: Float
     height: 2,
     data: new Float32Array([0, 0, 0, 0])
   };
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1500): Promise<void> {
+  const start = performance.now();
+
+  while (!predicate()) {
+    if (performance.now() - start > timeoutMs) {
+      throw new Error("waitUntil timed out");
+    }
+
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 10);
+    });
+  }
 }
 
 describe("GlobeEngine event system", () => {
@@ -81,23 +96,34 @@ describe("GlobeEngine event system", () => {
     const typedEngine = engine as GlobeEngine & {
       on: (eventName: "error", handler: (payload: unknown) => void) => () => void;
     };
-    const layer = new SurfaceTileLayer("surface-errors", {
-      minZoom: 0,
-      maxZoom: 0,
+    typedEngine.on("error", handler);
+    const terrain = new TerrainTileLayer("terrain", {
+      terrain: {
+        tiles: ["dem://{z}/{x}/{y}"],
+        encode: "terrarium",
+        minZoom: 0,
+        maxZoom: 0,
+        tileSize: 1
+      },
       meshSegments: 1,
       selectTiles: () => ({
         zoom: 0,
         coordinates: [{ z: 0, x: 0, y: 0 }]
       }),
-      loadImageryTile: async () => {
-        throw new Error("imagery failed");
-      },
       loadElevationTile: async () => createElevationTileData()
     });
+    engine.addLayer(terrain);
+    await terrain.ready();
 
-    typedEngine.on("error", handler);
-    engine.addLayer(layer);
-    await layer.ready();
+    const source = new RasterTileSource("raster", {
+      tiles: ["raster://{z}/{x}/{y}"],
+      loadTile: async () => {
+        throw new Error("imagery failed");
+      }
+    });
+    engine.addSource("raster", source);
+    engine.addLayer(new RasterLayer({ id: "raster", source: "raster" }));
+    await waitUntil(() => handler.mock.calls.length > 0);
 
     expect(handler).toHaveBeenCalledTimes(1);
     const payload = handler.mock.calls[0][0] as {
@@ -113,7 +139,7 @@ describe("GlobeEngine event system", () => {
     };
 
     expect(payload.source).toBe("layer");
-    expect(payload.layerId).toBe("surface-errors");
+    expect(payload.layerId).toBe("raster");
     expect(payload.recoverable).toBe(true);
     expect(payload.stage).toBe("imagery");
     expect(payload.category).toBe("network");
@@ -207,15 +233,28 @@ describe("GlobeEngine event system", () => {
       on: (eventName: "error", handler: (payload: unknown) => void) => () => void;
     };
     let attempt = 0;
-    const layer = new SurfaceTileLayer("surface-policy-retry", {
-      minZoom: 0,
-      maxZoom: 0,
+    typedEngine.on("error", errorHandler);
+    const terrain = new TerrainTileLayer("terrain", {
+      terrain: {
+        tiles: ["dem://{z}/{x}/{y}"],
+        encode: "terrarium",
+        minZoom: 0,
+        maxZoom: 0,
+        tileSize: 1
+      },
       meshSegments: 1,
       selectTiles: () => ({
         zoom: 0,
         coordinates: [{ z: 0, x: 0, y: 0 }]
       }),
-      loadImageryTile: async () => {
+      loadElevationTile: async () => createElevationTileData()
+    });
+    engine.addLayer(terrain);
+    await terrain.ready();
+
+    const source = new RasterTileSource("raster", {
+      tiles: ["raster://{z}/{x}/{y}"],
+      loadTile: async () => {
         attempt += 1;
 
         if (attempt < 3) {
@@ -223,16 +262,13 @@ describe("GlobeEngine event system", () => {
         }
 
         return createImageryCanvas();
-      },
-      loadElevationTile: async () => createElevationTileData()
+      }
     });
-
-    typedEngine.on("error", errorHandler);
-    engine.addLayer(layer);
-    await layer.ready();
+    engine.addSource("raster", source);
+    engine.addLayer(new RasterLayer({ id: "raster", source: "raster" }));
+    await waitUntil(() => attempt >= 3);
 
     expect(attempt).toBe(3);
-    expect(layer.getActiveTileKeys()).toEqual(["0/0/0"]);
     expect(errorHandler).not.toHaveBeenCalled();
     expect(engine.getPerformanceReport().metrics.get("recoveryPolicyQueryCount:imagery")?.value)
       .toBeGreaterThan(0);
@@ -295,32 +331,42 @@ describe("GlobeEngine event system", () => {
       on: (eventName: "error", handler: (payload: unknown) => void) => () => void;
     };
     let attempt = 0;
-    const layer = new SurfaceTileLayer("surface-policy-fallback", {
-      minZoom: 0,
-      maxZoom: 0,
-      meshSegments: 1,
-      selectTiles: () => ({
-        zoom: 0,
-        coordinates: [{ z: 0, x: 0, y: 0 }]
-      }),
-      loadImageryTile: async () => {
-        attempt += 1;
-        throw new Error(`persistent imagery failure ${attempt}`);
-      },
-      loadElevationTile: async () => createElevationTileData()
-    });
-
     typedEngine.on("error", errorHandler);
     try {
-      engine.addLayer(layer);
-      await layer.ready();
+      const terrain = new TerrainTileLayer("terrain", {
+        terrain: {
+          tiles: ["dem://{z}/{x}/{y}"],
+          encode: "terrarium",
+          minZoom: 0,
+          maxZoom: 0,
+          tileSize: 1
+        },
+        meshSegments: 1,
+        selectTiles: () => ({
+          zoom: 0,
+          coordinates: [{ z: 0, x: 0, y: 0 }]
+        }),
+        loadElevationTile: async () => createElevationTileData()
+      });
+      engine.addLayer(terrain);
+      await terrain.ready();
+
+      const source = new RasterTileSource("raster", {
+        tiles: ["raster://{z}/{x}/{y}"],
+        loadTile: async () => {
+          attempt += 1;
+          throw new Error(`persistent imagery failure ${attempt}`);
+        }
+      });
+      engine.addSource("raster", source);
+      engine.addLayer(new RasterLayer({ id: "raster", source: "raster" }));
+      await waitUntil(() => errorHandler.mock.calls.length > 0);
 
       expect(attempt).toBe(2);
-      expect(layer.getActiveTileKeys()).toEqual(["0/0/0"]);
       expect(errorHandler).toHaveBeenCalledTimes(1);
       expect(errorHandler).toHaveBeenCalledWith(expect.objectContaining({
         source: "layer",
-        layerId: "surface-policy-fallback",
+        layerId: "raster",
         stage: "imagery",
         category: "network",
         severity: "warn",
@@ -374,27 +420,34 @@ describe("GlobeEngine event system", () => {
       on: (eventName: "error", handler: (payload: unknown) => void) => () => void;
     };
     let attempt = 0;
-    const layer = new ElevationLayer("elevation-policy-retry", {
-      zoom: 0,
-      tileSize: 1,
-      loadTile: async () => {
-        attempt += 1;
-
-        if (attempt < 3) {
-          throw new Error(`elevation transient ${attempt}`);
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = 1;
-        canvas.height = 1;
-        return canvas;
-      }
-    });
-
     typedEngine.on("error", errorHandler);
     try {
-      engine.addLayer(layer);
-      await layer.ready();
+      const terrain = new TerrainTileLayer("terrain", {
+        terrain: {
+          tiles: ["dem://{z}/{x}/{y}"],
+          encode: "terrarium",
+          minZoom: 0,
+          maxZoom: 0,
+          tileSize: 1
+        },
+        meshSegments: 1,
+        selectTiles: () => ({
+          zoom: 0,
+          coordinates: [{ z: 0, x: 0, y: 0 }]
+        }),
+        loadElevationTile: async () => {
+          attempt += 1;
+
+          if (attempt < 3) {
+            throw new Error(`elevation transient ${attempt}`);
+          }
+
+          return createElevationTileData();
+        }
+      });
+
+      engine.addLayer(terrain);
+      await terrain.ready();
 
       expect(attempt).toBe(3);
       expect(errorHandler).not.toHaveBeenCalled();

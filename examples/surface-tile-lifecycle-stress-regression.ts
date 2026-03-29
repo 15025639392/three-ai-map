@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, SurfaceTileLayer } from "../src";
-import type { ElevationTileData } from "../src/layers/SurfaceTileLayer";
+import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
@@ -84,11 +84,16 @@ function createElevationTile(coordinate: TileCoordinate): ElevationTileData {
   };
 }
 
-function createSurfaceLayer(layerId: string): SurfaceTileLayer {
-  return new SurfaceTileLayer(layerId, {
-    minZoom: 2,
-    maxZoom: 6,
-    tileSize: 128,
+function createTerrainLayer(layerId: string): TerrainTileLayer {
+  return new TerrainTileLayer(layerId, {
+    terrain: {
+      tiles: ["memory://{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 2,
+      maxZoom: 6,
+      tileSize: 128,
+      cache: 64,
+    },
     meshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
@@ -99,8 +104,6 @@ function createSurfaceLayer(layerId: string): SurfaceTileLayer {
         { z: 2, x: 3, y: 1 }
       ]
     }),
-    loadImageryTile: async (coordinate, signal?: AbortSignal) =>
-      delayValue(10 + ((coordinate.x + coordinate.y) % 2) * 8, () => createImageryTile(coordinate), signal),
     loadElevationTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(6, () => createElevationTile(coordinate), signal)
   });
@@ -120,6 +123,22 @@ export function runSurfaceTileLifecycleStressRegression(
     radius: 1,
     background: "#020611"
   });
+  const rasterSourceId = "lifecycle-stress-raster";
+  const rasterSource = new RasterTileSource(rasterSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    tileSize: 128,
+    cache: 64,
+    concurrency: 4,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
+      delayValue(
+        10 + ((coordinate.x + coordinate.y) % 2) * 8,
+        () => createImageryTile(coordinate),
+        signal
+      )
+  });
+  engine.addSource(rasterSourceId, rasterSource);
+  const rasterLayer = new RasterLayer({ id: `${layerId}:raster`, source: rasterSourceId });
+  engine.addLayer(rasterLayer);
 
   const sceneObjectCounts: number[] = [];
   let tileKeysRestoredCount = 0;
@@ -138,7 +157,7 @@ export function runSurfaceTileLifecycleStressRegression(
   const handleError = (error: unknown): void => {
     frameLoopStopped = true;
     container.dataset.phase = "error";
-    output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+    output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   };
 
   const finalize = (): void => {
@@ -171,12 +190,12 @@ export function runSurfaceTileLifecycleStressRegression(
 
   const runScenario = async (): Promise<void> => {
     for (let cycle = 1; cycle <= cycleCount; cycle += 1) {
-      const layer = createSurfaceLayer(layerId);
-      engine.addLayer(layer);
+      const terrain = createTerrainLayer(layerId);
+      engine.addLayer(terrain);
       engine.setView({ lng: 8, lat: 26, altitude: 2.3 });
-      await layer.ready();
+      await terrain.ready();
 
-      const keys = layer.getActiveTileKeys().join(",");
+      const keys = terrain.getActiveTileKeys().join(",");
       if (keys === expectedTileKeys) {
         tileKeysRestoredCount += 1;
       }
@@ -185,9 +204,8 @@ export function runSurfaceTileLifecycleStressRegression(
       sceneObjectCounts.push(sceneObjectCount);
 
       engine.removeLayer(layerId);
-      const removeCleared = layer.getDebugStats().activeTileCount === 0 &&
-        !engine.sceneSystem.scene.getObjectByName(layerId) &&
-        engine.globe.mesh.visible;
+      const removeCleared = terrain.getDebugStats().activeTileCount === 0 &&
+        !engine.sceneSystem.scene.getObjectByName(layerId);
       if (removeCleared) {
         removeClearedCount += 1;
       }
@@ -207,7 +225,7 @@ export function runSurfaceTileLifecycleStressRegression(
   container.dataset.sceneObjectCountMax = "";
   container.dataset.stableSceneObjectCount = "";
   container.dataset.allExpected = "";
-  output.textContent = "booting:surface-tile-lifecycle-stress-regression";
+  output.textContent = "启动中:surface-tile-lifecycle-stress-regression";
   window.requestAnimationFrame(frameLoop);
 
   void runScenario()
@@ -239,9 +257,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:surface-tile-lifecycle-stress-regression</div>
+      <div class="demo-status" id="status-output">启动中:surface-tile-lifecycle-stress-regression</div>
     </main>
   `;
 

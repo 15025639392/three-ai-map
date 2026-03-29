@@ -39,7 +39,7 @@ export function runVectorOverlapPickRegression(
   container.dataset.depthHitIsExpected = "";
   container.dataset.allHitsExpected = "";
   container.dataset.missHitIsVectorFeature = "";
-  output.textContent = "booting:vector-overlap-pick-regression";
+  output.textContent = "启动中:vector-overlap-pick-regression";
 
   const engine = new GlobeEngine({
     container,
@@ -152,9 +152,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:vector-overlap-pick-regression</div>
+      <div class="demo-status" id="status-output">启动中:vector-overlap-pick-regression</div>
     </main>
   `;
 

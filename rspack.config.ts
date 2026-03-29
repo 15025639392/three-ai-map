@@ -57,7 +57,7 @@ const demos = [
   {
     name: "gaode-satellite-labels",
     title: "Gaode Satellite + Labels",
-    description: "Gaode satellite base with road/label overlay (dual SurfaceTileLayer)",
+    description: "Gaode satellite base with road/label overlay (dual RasterLayer on one terrain host)",
   },
   {
     name: "baidu-satellite",

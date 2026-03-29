@@ -24,12 +24,15 @@ export type {
 export { MarkerLayer } from "./layers/MarkerLayer";
 export { PolylineLayer } from "./layers/PolylineLayer";
 export { PolygonLayer } from "./layers/PolygonLayer";
-export { ImageryLayer } from "./layers/ImageryLayer";
-
-// Tile Layers
-export { ElevationLayer } from "./layers/ElevationLayer";
-export { SurfaceTileLayer } from "./layers/SurfaceTileLayer";
-export type { CoordTransformFn, SurfaceTileLayerOptions } from "./layers/SurfaceTileLayer";
+export { TerrainTileLayer } from "./layers/TerrainTileLayer";
+export type {
+  TerrainConfig,
+  TerrainTileLayerOptions,
+  CoordTransformFn,
+  ElevationTileData
+} from "./layers/TerrainTileLayer";
+export { RasterLayer } from "./layers/RasterLayer";
+export type { RasterLayerOptions } from "./layers/RasterLayer";
 
 // Advanced Layers
 export { VectorTileLayer } from "./layers/VectorTileLayer";
@@ -81,6 +84,13 @@ export { PostProcessing } from "./core/PostProcessing";
 // Tile Infrastructure
 export { defaultTileLoader, corsTileLoader, type TileSource } from "./tiles/tileLoader";
 export { FrustumCuller } from "./tiles/FrustumCuller";
+export type { LngLatBounds } from "./tiles/LngLatBounds";
+export type { ElevationEncoding } from "./tiles/ElevationEncoding";
+
+// Sources
+export type { Source, SourceContext } from "./sources/Source";
+export { RasterTileSource } from "./sources/RasterTileSource";
+export type { RasterTileSourceOptions } from "./sources/RasterTileSource";
 
 // Spatial Index
 export { SpatialIndex } from "./spatial/SpatialIndex";

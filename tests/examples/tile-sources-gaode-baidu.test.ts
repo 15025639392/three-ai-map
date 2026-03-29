@@ -1,25 +1,47 @@
 const {
   GlobeEngineMock,
   addLayerMock,
-  SurfaceTileLayerMock,
+  addSourceMock,
+  TerrainTileLayerMock,
+  RasterTileSourceMock,
+  RasterLayerMock,
 } = vi.hoisted(() => {
   const addLayerMock = vi.fn();
+  const addSourceMock = vi.fn();
   const GlobeEngineMock = vi.fn().mockImplementation(() => ({
     addLayer: addLayerMock,
+    addSource: addSourceMock,
     setView: vi.fn(),
     on: vi.fn(),
   }));
-  const SurfaceTileLayerMock = vi.fn().mockImplementation((_id: string, opts?: Record<string, unknown>) => ({
-    id: _id,
-    options: opts,
+  const TerrainTileLayerMock = vi.fn().mockImplementation((id: string, options?: Record<string, unknown>) => ({
+    id,
+    options,
     ready: () => Promise.resolve(),
   }));
+  const RasterTileSourceMock = vi.fn().mockImplementation((id: string, options?: Record<string, unknown>) => ({
+    id,
+    options,
+  }));
+  const RasterLayerMock = vi.fn().mockImplementation((options: { id: string; source: string }) => ({
+    id: options.id,
+    options,
+  }));
 
-  return { GlobeEngineMock, addLayerMock, SurfaceTileLayerMock };
+  return {
+    GlobeEngineMock,
+    addLayerMock,
+    addSourceMock,
+    TerrainTileLayerMock,
+    RasterTileSourceMock,
+    RasterLayerMock,
+  };
 });
 
 vi.mock("../../src/engine/GlobeEngine", () => ({ GlobeEngine: GlobeEngineMock }));
-vi.mock("../../src/layers/SurfaceTileLayer", () => ({ SurfaceTileLayer: SurfaceTileLayerMock }));
+vi.mock("../../src/layers/TerrainTileLayer", () => ({ TerrainTileLayer: TerrainTileLayerMock }));
+vi.mock("../../src/sources/RasterTileSource", () => ({ RasterTileSource: RasterTileSourceMock }));
+vi.mock("../../src/layers/RasterLayer", () => ({ RasterLayer: RasterLayerMock }));
 
 import {
   GAODE_URLS,
@@ -65,7 +87,10 @@ describe("tile source URLs", () => {
 describe("Gaode examples", () => {
   beforeEach(() => {
     addLayerMock.mockClear();
-    SurfaceTileLayerMock.mockClear();
+    addSourceMock.mockClear();
+    TerrainTileLayerMock.mockClear();
+    RasterTileSourceMock.mockClear();
+    RasterLayerMock.mockClear();
   });
 
   it("runGaodeSatellite creates engine with satellite tiles", () => {
@@ -74,43 +99,49 @@ describe("Gaode examples", () => {
     runGaodeSatellite(container, output);
 
     expect(GlobeEngineMock).toHaveBeenCalledTimes(1);
-    expect(SurfaceTileLayerMock).toHaveBeenCalledTimes(1);
-    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
+    expect(TerrainTileLayerMock).toHaveBeenCalledTimes(1);
+    expect(RasterTileSourceMock).toHaveBeenCalledWith(
       "gaode-satellite",
       expect.objectContaining({
-        imageryTemplateUrl: GAODE_URLS.satellite,
-        maxZoom: 18,
+        tiles: [GAODE_URLS.satellite],
       }),
     );
-    expect(addLayerMock).toHaveBeenCalledTimes(1);
+    expect(addSourceMock).toHaveBeenCalledWith(
+      "gaode-satellite",
+      expect.objectContaining({ id: "gaode-satellite" })
+    );
+    expect(RasterLayerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "gaode-satellite", source: "gaode-satellite" })
+    );
+    expect(addLayerMock).toHaveBeenCalledTimes(2);
   });
 
   it("runGaodeSatelliteLabels creates two layers (satellite + labels)", () => {
     const container = document.createElement("div");
     runGaodeSatelliteLabels(container);
 
-    expect(SurfaceTileLayerMock).toHaveBeenCalledTimes(2);
-    expect(SurfaceTileLayerMock).toHaveBeenNthCalledWith(
+    expect(TerrainTileLayerMock).toHaveBeenCalledTimes(1);
+    expect(RasterTileSourceMock).toHaveBeenCalledTimes(2);
+    expect(RasterTileSourceMock).toHaveBeenNthCalledWith(
       1,
       "gaode-satellite-base",
-      expect.objectContaining({ imageryTemplateUrl: GAODE_URLS.satellite }),
+      expect.objectContaining({ tiles: [GAODE_URLS.satellite] }),
     );
-    expect(SurfaceTileLayerMock).toHaveBeenNthCalledWith(
+    expect(RasterTileSourceMock).toHaveBeenNthCalledWith(
       2,
       "gaode-satellite-labels",
-      expect.objectContaining({ imageryTemplateUrl: GAODE_URLS.labels }),
+      expect.objectContaining({ tiles: [GAODE_URLS.labels] }),
     );
-    expect(addLayerMock).toHaveBeenCalledTimes(2);
+    expect(addLayerMock).toHaveBeenCalledTimes(3);
   });
 
   it("runGaodeRoad creates engine with road tiles", () => {
     const container = document.createElement("div");
     runGaodeRoad(container);
 
-    expect(SurfaceTileLayerMock).toHaveBeenCalledTimes(1);
-    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
+    expect(RasterTileSourceMock).toHaveBeenCalledWith(
       "gaode-road",
-      expect.objectContaining({ imageryTemplateUrl: GAODE_URLS.road }),
+      expect.objectContaining({ tiles: [GAODE_URLS.road] }),
     );
   });
 
@@ -118,8 +149,8 @@ describe("Gaode examples", () => {
     const container = document.createElement("div");
     runGaodeSatellite(container);
 
-    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
-      "gaode-satellite",
+    expect(TerrainTileLayerMock).toHaveBeenCalledWith(
+      "terrain",
       expect.objectContaining({
         coordTransform: expect.any(Function),
       }),
@@ -130,29 +161,30 @@ describe("Gaode examples", () => {
 describe("Baidu examples", () => {
   beforeEach(() => {
     addLayerMock.mockClear();
-    SurfaceTileLayerMock.mockClear();
+    addSourceMock.mockClear();
+    TerrainTileLayerMock.mockClear();
+    RasterTileSourceMock.mockClear();
+    RasterLayerMock.mockClear();
   });
 
   it("runBaiduSatellite creates engine with satellite tiles", () => {
     const container = document.createElement("div");
     runBaiduSatellite(container);
 
-    expect(SurfaceTileLayerMock).toHaveBeenCalledTimes(1);
-    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
+    expect(RasterTileSourceMock).toHaveBeenCalledWith(
       "baidu-satellite",
-      expect.objectContaining({ imageryTemplateUrl: BAIDU_URLS.satellite }),
+      expect.objectContaining({ tiles: [BAIDU_URLS.satellite] }),
     );
-    expect(addLayerMock).toHaveBeenCalledTimes(1);
+    expect(addLayerMock).toHaveBeenCalledTimes(2);
   });
 
   it("runBaiduRoad creates engine with road tiles", () => {
     const container = document.createElement("div");
     runBaiduRoad(container);
 
-    expect(SurfaceTileLayerMock).toHaveBeenCalledTimes(1);
-    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
+    expect(RasterTileSourceMock).toHaveBeenCalledWith(
       "baidu-road",
-      expect.objectContaining({ imageryTemplateUrl: BAIDU_URLS.road }),
+      expect.objectContaining({ tiles: [BAIDU_URLS.road] }),
     );
   });
 
@@ -160,8 +192,8 @@ describe("Baidu examples", () => {
     const container = document.createElement("div");
     runBaiduSatellite(container);
 
-    expect(SurfaceTileLayerMock).toHaveBeenCalledWith(
-      "baidu-satellite",
+    expect(TerrainTileLayerMock).toHaveBeenCalledWith(
+      "terrain",
       expect.objectContaining({
         coordTransform: expect.any(Function),
       }),

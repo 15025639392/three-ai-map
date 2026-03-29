@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, SurfaceTileLayer } from "../src";
-import type { ElevationTileData } from "../src/layers/SurfaceTileLayer";
+import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function createFlatElevationTile(): ElevationTileData {
@@ -95,10 +95,15 @@ export function runSurfaceTileZoomRegression(
     radius: 1,
     background: "#020611",
   });
-  const surfaceTiles = new SurfaceTileLayer("surface-tile-zoom-regression", {
-    minZoom: 2,
-    maxZoom: 9,
-    tileSize: 128,
+  const terrain = new TerrainTileLayer("terrain", {
+    terrain: {
+      tiles: ["memory://{z}/{x}/{y}.png"],
+      encode: "terrarium",
+      minZoom: 2,
+      maxZoom: 9,
+      tileSize: 128,
+      cache: 64,
+    },
     meshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
@@ -137,15 +142,23 @@ export function runSurfaceTileZoomRegression(
         ],
       };
     },
-    loadImageryTile: async (coordinate, signal?: AbortSignal) =>
+    loadElevationTile: async (_coordinate, signal?: AbortSignal) =>
+      delayValue(18, () => createFlatElevationTile(), signal),
+  });
+  const rasterSource = new RasterTileSource("raster", {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    tileSize: 128,
+    cache: 64,
+    concurrency: 4,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(
         28 + ((coordinate.x + coordinate.y + coordinate.z) % 3) * 14,
         () => createImageryTile(coordinate),
         signal
       ),
-    loadElevationTile: async (_coordinate, signal?: AbortSignal) =>
-      delayValue(18, () => createFlatElevationTile(), signal),
   });
+  engine.addSource("raster", rasterSource);
+  const rasterLayer = new RasterLayer({ id: "raster-layer", source: "raster" });
 
   let beforeTiles = "";
   let frameLoopStopped = false;
@@ -162,17 +175,18 @@ export function runSurfaceTileZoomRegression(
   const handleError = (error: unknown): void => {
     frameLoopStopped = true;
     container.dataset.phase = "error";
-    output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+    output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   };
 
   const finalize = (): void => {
     frameLoopStopped = true;
     const report = engine.getPerformanceReport();
-    const stats = surfaceTiles.getDebugStats();
+    const terrainStats = terrain.getDebugStats();
+    const rasterStats = rasterSource.getStats();
     const averageFPS = Number(report.averageFPS.toFixed(2));
     const latestFrameTime = Number(report.frameTime.toFixed(2));
-    const imageryCancelRatio = stats.imagery.requested > 0
-      ? Number((stats.imagery.cancelled / stats.imagery.requested).toFixed(4))
+    const imageryCancelRatio = rasterStats.requested > 0
+      ? Number((rasterStats.cancelled / rasterStats.requested).toFixed(4))
       : 0;
     const recoveryPolicyQueryCount =
       report.metrics.get("recoveryPolicyQueryCount")?.value ?? 0;
@@ -192,10 +206,10 @@ export function runSurfaceTileZoomRegression(
     container.dataset.frameTime = `${latestFrameTime}`;
     container.dataset.frameDrops = `${report.frameDrops}`;
     container.dataset.usedJsHeapSize = `${report.memory?.usedJSHeapSize ?? "na"}`;
-    container.dataset.imageryRequested = `${stats.imagery.requested}`;
-    container.dataset.imageryCancelled = `${stats.imagery.cancelled}`;
-    container.dataset.elevationRequested = `${stats.elevation.requested}`;
-    container.dataset.elevationCancelled = `${stats.elevation.cancelled}`;
+    container.dataset.imageryRequested = `${rasterStats.requested}`;
+    container.dataset.imageryCancelled = `${rasterStats.cancelled}`;
+    container.dataset.elevationRequested = `${terrainStats.elevation.requested}`;
+    container.dataset.elevationCancelled = `${terrainStats.elevation.cancelled}`;
     container.dataset.imageryCancelRatio = `${imageryCancelRatio}`;
     container.dataset.recoveryPolicyQueryCount = `${recoveryPolicyQueryCount}`;
     container.dataset.recoveryPolicyHitCount = `${recoveryPolicyHitCount}`;
@@ -224,16 +238,17 @@ export function runSurfaceTileZoomRegression(
   container.dataset.recoveryPolicyImageryQueryCount = "";
   container.dataset.recoveryPolicyImageryHitCount = "";
   container.dataset.recoveryPolicyImageryRuleHitCount = "";
-  output.textContent = "booting:surface-tile-zoom-regression";
+  output.textContent = "启动中:surface-tile-zoom-regression";
 
   window.requestAnimationFrame(frameLoop);
 
-  engine.addLayer(surfaceTiles);
+  engine.addLayer(terrain);
+  engine.addLayer(rasterLayer);
   engine.setView({ lng: 8, lat: 28, altitude: 2.8 });
 
-  void surfaceTiles.ready()
+  void terrain.ready()
     .then(() => {
-      beforeTiles = surfaceTiles.getActiveTileKeys().join(",");
+      beforeTiles = terrain.getActiveTileKeys().join(",");
       container.dataset.beforeTiles = beforeTiles;
       container.dataset.phase = "before-zoom";
       output.textContent = `before-zoom:${beforeTiles || "none"}`;
@@ -245,9 +260,9 @@ export function runSurfaceTileZoomRegression(
         window.setTimeout(() => {
           engine.setView({ lng: 8, lat: 28, altitude: 1.1 });
 
-          void surfaceTiles.ready()
+          void terrain.ready()
             .then(() => {
-              container.dataset.afterTiles = surfaceTiles.getActiveTileKeys().join(",");
+              container.dataset.afterTiles = terrain.getActiveTileKeys().join(",");
               output.textContent = `settling:${container.dataset.afterTiles || "none"}`;
               window.setTimeout(finalize, 180);
             })
@@ -262,12 +277,14 @@ export function runSurfaceTileZoomRegression(
       window as Window & {
         __surfaceTileZoomRegression?: {
           engine: GlobeEngine;
-          surfaceTiles: SurfaceTileLayer;
+          terrain: TerrainTileLayer;
+          raster: RasterLayer;
         };
       }
     ).__surfaceTileZoomRegression = {
       engine,
-      surfaceTiles,
+      terrain,
+      raster: rasterLayer,
     };
   }
 
@@ -282,9 +299,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:surface-tile-zoom-regression</div>
+      <div class="demo-status" id="status-output">启动中:surface-tile-zoom-regression</div>
     </main>
   `;
 

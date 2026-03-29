@@ -83,7 +83,7 @@ export function runProjectionRegression(container: HTMLElement, output: HTMLElem
   container.dataset.maxWgsGcjWgsErrorMeters = "";
   container.dataset.maxGcjBdGcjErrorMeters = "";
   container.dataset.maxWgsBdWgsErrorMeters = "";
-  output.textContent = "booting:projection-regression";
+  output.textContent = "启动中:projection-regression";
 
   engine.setView({ lng: 108, lat: 32, altitude: 2.5 });
 
@@ -120,9 +120,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:projection-regression</div>
+      <div class="demo-status" id="status-output">启动中:projection-regression</div>
     </main>
   `;
 

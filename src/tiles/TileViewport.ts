@@ -54,6 +54,16 @@ function latToTileY(lat: number, zoom: number): number {
   );
 }
 
+function normalizeTileX(x: number, zoom: number): number {
+  const worldTileCount = 2 ** zoom;
+  return ((x % worldTileCount) + worldTileCount) % worldTileCount;
+}
+
+function clampTileY(y: number, zoom: number): number {
+  const worldTileCount = 2 ** zoom;
+  return Math.max(0, Math.min(worldTileCount - 1, y));
+}
+
 function shortestLongitudeDelta(left: number, right: number): number {
   const delta = normalizeLongitude(right - left);
   return Math.abs(delta === 180 ? -180 : delta);
@@ -200,7 +210,7 @@ export function computeVisibleTileCoordinates({
   if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
     const centerX = Math.floor(centerTileX);
     const centerY = Math.floor(latToTileY(centerCartographic.lat, zoom));
-    return [{ z: zoom, x: ((centerX % worldTileCount) + worldTileCount) % worldTileCount, y: centerY }];
+    return [{ z: zoom, x: normalizeTileX(centerX, zoom), y: clampTileY(centerY, zoom) }];
   }
 
   const padding = Math.max(0, Math.floor(paddingTiles ?? 1));

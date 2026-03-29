@@ -29,6 +29,9 @@ import { MarkerLayer } from "../layers/MarkerLayer";
 import { PolygonLayer } from "../layers/PolygonLayer";
 import { PolylineLayer } from "../layers/PolylineLayer";
 import { EventEmitter } from "../utils/EventEmitter";
+import { Source } from "../sources/Source";
+import { SourceManager } from "../sources/SourceManager";
+import { TerrainTileLayer } from "../layers/TerrainTileLayer";
 
 export interface GlobeEngineEvents {
   click: {
@@ -56,6 +59,9 @@ export class GlobeEngine {
   private readonly rendererSystem: RendererAdapter;
   private readonly cameraController: CameraController;
   private readonly layerManager: LayerManager;
+  private readonly sourceManager: SourceManager;
+  private terrainHost: TerrainTileLayer | null = null;
+  private readonly showBaseGlobe: boolean;
   private readonly recoveryPolicyDefaults: LayerRecoveryOverrides;
   private readonly recoveryPolicyRules: GlobeEngineRecoveryRule[];
   private readonly raycaster = new Raycaster();
@@ -77,7 +83,6 @@ export class GlobeEngine {
     container,
     radius = 1,
     background = "#03060d",
-    terrainStrength = 0,
     showBaseGlobe = true,
     camera,
     recoveryPolicy,
@@ -85,6 +90,7 @@ export class GlobeEngine {
   }: GlobeEngineOptions) {
     this.container = container;
     this.radius = radius;
+    this.showBaseGlobe = showBaseGlobe;
     this.sceneSystem = new SceneSystem({
       fieldOfView: camera?.fov,
       near: camera?.near,
@@ -96,7 +102,7 @@ export class GlobeEngine {
     });
     this.recoveryPolicyDefaults = { ...(recoveryPolicy?.defaults ?? {}) };
     this.recoveryPolicyRules = [...(recoveryPolicy?.rules ?? [])];
-    this.globe = new GlobeMesh({ radius, terrainStrength });
+    this.globe = new GlobeMesh({ radius });
     this.atmosphere = new AtmosphereMesh(radius);
     this.starfield = new Starfield(1200, radius * 18);
     this.performanceMonitor = new PerformanceMonitor();
@@ -105,6 +111,10 @@ export class GlobeEngine {
     }
     this.sceneSystem.scene.add(this.atmosphere.mesh);
     this.sceneSystem.scene.add(this.starfield.points);
+    this.sourceManager = new SourceManager({
+      requestRender: this.requestRender,
+      resolveRecovery: this.resolveLayerRecovery
+    });
     this.layerManager = new LayerManager({
       scene: this.sceneSystem.scene,
       camera: this.sceneSystem.camera,
@@ -113,7 +123,9 @@ export class GlobeEngine {
       rendererElement: this.rendererSystem.renderer.domElement,
       requestRender: this.requestRender,
       reportError: this.handleLayerError,
-      resolveRecovery: this.resolveLayerRecovery
+      resolveRecovery: this.resolveLayerRecovery,
+      getSource: (id: string) => this.sourceManager.get(id),
+      getTerrainHost: () => this.terrainHost
     });
 
     this.cameraController = new CameraController({
@@ -170,6 +182,14 @@ export class GlobeEngine {
   }
 
   addLayer(layer: Layer): void {
+    if (layer instanceof TerrainTileLayer) {
+      if (this.terrainHost && this.terrainHost !== layer) {
+        throw new Error("Only one TerrainTileLayer can be added to GlobeEngine at a time");
+      }
+
+      this.terrainHost = layer;
+      this.applyBaseGlobeTerrainInset();
+    }
     this.layerManager.add(layer);
     this.render();
   }
@@ -185,8 +205,26 @@ export class GlobeEngine {
       this.polygonLayer = null;
     }
 
+    const existing = this.layerManager.get(layerId);
+    if (existing && existing === this.terrainHost) {
+      this.terrainHost = null;
+      this.applyBaseGlobeTerrainInset();
+    }
+
     this.layerManager.remove(layerId);
     this.render();
+  }
+
+  addSource(id: string, source: Source): void {
+    this.sourceManager.add(id, source);
+  }
+
+  removeSource(id: string): void {
+    this.sourceManager.remove(id);
+  }
+
+  getSource(id: string): Source | undefined {
+    return this.sourceManager.get(id);
   }
 
   addMarker(marker: MarkerDefinition): void {
@@ -277,7 +315,10 @@ export class GlobeEngine {
     window.removeEventListener("resize", this.handleResize);
     this.rendererSystem.renderer.domElement.removeEventListener("click", this.handleClick);
     this.cancelScheduledRender();
+    this.sourceManager.clear();
     this.layerManager.clear();
+    this.terrainHost = null;
+    this.applyBaseGlobeTerrainInset();
     this.cameraController.dispose();
     this.atmosphere.dispose();
     this.starfield.dispose();
@@ -463,5 +504,17 @@ export class GlobeEngine {
 
     window.cancelAnimationFrame(this.pendingRenderFrameId);
     this.pendingRenderFrameId = null;
+  }
+
+  private applyBaseGlobeTerrainInset(): void {
+    if (!this.showBaseGlobe) {
+      return;
+    }
+
+    // Terrain tiles are chord-based meshes; without an inset, the base globe sphere can
+    // occlude them via depth testing (especially at low zoom / coarse meshSegments).
+    const scale = this.terrainHost ? 0.998 : 1.0;
+    this.globe.mesh.scale.setScalar(scale);
+    this.globe.mesh.updateMatrixWorld(true);
   }
 }

@@ -1,6 +1,6 @@
 import "../src/styles.css";
 import { BufferGeometry, Mesh } from "three";
-import { GlobeEngine, SurfaceTileLayer } from "../src";
+import { GlobeEngine, TerrainTileLayer } from "../src";
 
 interface TileCoordinate {
   z: number;
@@ -17,27 +17,6 @@ const FIXED_SELECTION = {
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
   stage.style.width = `${width}px`;
   stage.style.height = `${height}px`;
-}
-
-function createDeterministicTileCanvas(tag: string): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 64;
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Missing 2D context for deterministic tile canvas");
-  }
-
-  context.fillStyle = "#1f2a39";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#3d5470";
-  context.fillRect(0, 0, canvas.width / 2, canvas.height / 2);
-  context.fillRect(canvas.width / 2, canvas.height / 2, canvas.width / 2, canvas.height / 2);
-  context.fillStyle = "#9fc6ff";
-  context.font = "12px sans-serif";
-  context.fillText(tag, 8, 34);
-  return canvas;
 }
 
 function createFlatElevationTile(): { width: number; height: number; data: Float32Array } {
@@ -89,7 +68,7 @@ export function runSurfaceTileCoordTransformRegression(
   container.dataset.transformApplied = "";
   container.dataset.uvInvariant = "";
   container.dataset.allExpected = "";
-  output.textContent = "booting:surface-tile-coord-transform-regression";
+  output.textContent = "启动中:surface-tile-coord-transform-regression";
 
   const engine = new GlobeEngine({
     container,
@@ -97,21 +76,25 @@ export function runSurfaceTileCoordTransformRegression(
     background: "#05101a"
   });
   const sharedOptions = {
-    minZoom: FIXED_COORDINATE.z,
-    maxZoom: FIXED_COORDINATE.z,
+    terrain: {
+      tiles: ["memory://{z}/{x}/{y}.png"],
+      encode: "terrarium" as const,
+      minZoom: FIXED_COORDINATE.z,
+      maxZoom: FIXED_COORDINATE.z,
+      tileSize: 256,
+      cache: 4,
+    },
     meshSegments: 4,
     skirtDepthMeters: 0,
     textureUvInsetPixels: 0,
     selectTiles: () => FIXED_SELECTION,
     loadElevationTile: async () => createFlatElevationTile()
   };
-  const noTransformLayer = new SurfaceTileLayer("surface-coord-base", {
-    ...sharedOptions,
-    loadImageryTile: async () => createDeterministicTileCanvas("base")
+  const noTransformLayer = new TerrainTileLayer("surface-coord-base", {
+    ...sharedOptions
   });
-  const transformLayer = new SurfaceTileLayer("surface-coord-shifted", {
+  const transformLayer = new TerrainTileLayer("surface-coord-shifted", {
     ...sharedOptions,
-    loadImageryTile: async () => createDeterministicTileCanvas("shift"),
     coordTransform: (lng, lat) => ({
       lng: lng + 0.15,
       lat: lat + 0.1
@@ -119,21 +102,32 @@ export function runSurfaceTileCoordTransformRegression(
   });
 
   const finalize = async (): Promise<void> => {
-    await Promise.all([noTransformLayer.ready(), transformLayer.ready()]);
+    engine.addLayer(noTransformLayer);
+    await noTransformLayer.ready();
     engine.render();
 
     const noTransformMesh = getLayerMesh(engine, noTransformLayer.id);
-    const transformMesh = getLayerMesh(engine, transformLayer.id);
-    if (!noTransformMesh || !transformMesh) {
-      throw new Error("Missing coord-transform regression mesh");
+    if (!noTransformMesh) {
+      throw new Error("Missing coord-transform base mesh");
     }
 
     const noTransformPosition = noTransformMesh.geometry.getAttribute("position");
-    const transformPosition = transformMesh.geometry.getAttribute("position");
     const noTransformUv = noTransformMesh.geometry.getAttribute("uv");
+    const noTransformTileKeys = noTransformLayer.getDebugStats().activeTileKeys.join(",");
+
+    engine.removeLayer(noTransformLayer.id);
+    engine.addLayer(transformLayer);
+    await transformLayer.ready();
+    engine.render();
+
+    const transformMesh = getLayerMesh(engine, transformLayer.id);
+    if (!transformMesh) {
+      throw new Error("Missing coord-transform regression mesh");
+    }
+
+    const transformPosition = transformMesh.geometry.getAttribute("position");
     const transformUv = transformMesh.geometry.getAttribute("uv");
 
-    const noTransformTileKeys = noTransformLayer.getDebugStats().activeTileKeys.join(",");
     const transformTileKeys = transformLayer.getDebugStats().activeTileKeys.join(",");
     const positionDeltaMax = computeMaxAbsDelta(noTransformPosition.array, transformPosition.array);
     const uvDeltaMax = computeMaxAbsDelta(noTransformUv.array, transformUv.array);
@@ -154,8 +148,6 @@ export function runSurfaceTileCoordTransformRegression(
     output.textContent = `after-surface-coord-transform:all=${allExpected}:delta=${positionDeltaMax.toFixed(6)}`;
   };
 
-  engine.addLayer(noTransformLayer);
-  engine.addLayer(transformLayer);
   engine.setView({ lng: 0, lat: 20, altitude: 2.3 });
   window.setTimeout(() => {
     void finalize();
@@ -166,8 +158,8 @@ export function runSurfaceTileCoordTransformRegression(
       window as Window & {
         __surfaceTileCoordTransformRegression?: {
           engine: GlobeEngine;
-          noTransformLayer: SurfaceTileLayer;
-          transformLayer: SurfaceTileLayer;
+          noTransformLayer: TerrainTileLayer;
+          transformLayer: TerrainTileLayer;
         };
       }
     ).__surfaceTileCoordTransformRegression = {
@@ -188,9 +180,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:surface-tile-coord-transform-regression</div>
+      <div class="demo-status" id="status-output">启动中:surface-tile-coord-transform-regression</div>
     </main>
   `;
 

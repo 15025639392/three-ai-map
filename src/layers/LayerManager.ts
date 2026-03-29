@@ -4,6 +4,7 @@ import { Layer, LayerContext, PickResult } from "./Layer";
 export class LayerManager {
   private readonly context: LayerContext;
   private readonly layers = new Map<string, Layer>();
+  private nextAddOrder = 0;
 
   constructor(context: LayerContext) {
     this.context = context;
@@ -14,6 +15,8 @@ export class LayerManager {
       throw new Error(`Layer "${layer.id}" already exists`);
     }
 
+    layer.addOrder = this.nextAddOrder;
+    this.nextAddOrder += 1;
     this.layers.set(layer.id, layer);
     layer.onAdd(this.context);
   }
@@ -74,11 +77,18 @@ export class LayerManager {
 
   private getOrderedLayers(): Layer[] {
     return Array.from(this.layers.values()).sort((left, right) => {
-      if (left.zIndex === right.zIndex) {
-        return left.id.localeCompare(right.id);
+      const leftZ = left.zIndex ?? 0;
+      const rightZ = right.zIndex ?? 0;
+
+      if (leftZ !== rightZ) {
+        return leftZ - rightZ;
       }
 
-      return left.zIndex - right.zIndex;
+      if (left.addOrder !== right.addOrder) {
+        return left.addOrder - right.addOrder;
+      }
+
+      return left.id.localeCompare(right.id);
     });
   }
 }

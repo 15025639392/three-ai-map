@@ -90,7 +90,7 @@ export function runSurfaceTileRecoveryStagesRegression(
 
   const handleError = (error: unknown): void => {
     container.dataset.phase = "error";
-    output.textContent = error instanceof Error ? `error:${error.message}` : "error:unknown";
+    output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   };
 
   container.dataset.phase = "booting";
@@ -100,7 +100,7 @@ export function runSurfaceTileRecoveryStagesRegression(
   container.dataset.recoveryPolicyTileParseQueryCount = "";
   container.dataset.recoveryPolicyTileParseHitCount = "";
   container.dataset.recoveryPolicyTileParseRuleHitCount = "";
-  output.textContent = "booting:surface-tile-recovery-stages-regression";
+  output.textContent = "启动中:surface-tile-recovery-stages-regression";
 
   engine.addLayer(probeLayer);
   engine.addLayer(vectorLayer);
@@ -139,9 +139,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage" style="flex:none;"></div>
-      <div class="demo-status" id="status-output">booting:surface-tile-recovery-stages-regression</div>
+      <div class="demo-status" id="status-output">启动中:surface-tile-recovery-stages-regression</div>
     </main>
   `;
 

@@ -1,5 +1,8 @@
+import { decodeElevationPixels, type ElevationEncoding } from "./ElevationEncoding";
+
 interface TerrariumDecodeWorkerRequest {
   id: number;
+  encoding: ElevationEncoding;
   width: number;
   height: number;
   buffer: ArrayBuffer;
@@ -21,20 +24,7 @@ interface TerrariumDecoderOptions {
   forceMainThread?: boolean;
 }
 
-function decodeTerrariumHeight(red: number, green: number, blue: number): number {
-  return red * 256 + green + blue / 256 - 32768;
-}
-
-export function decodeTerrariumPixels(width: number, height: number, pixels: Uint8ClampedArray): Float32Array {
-  const heights = new Float32Array(width * height);
-
-  for (let index = 0; index < heights.length; index += 1) {
-    const offset = index * 4;
-    heights[index] = decodeTerrariumHeight(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
-  }
-
-  return heights;
-}
+export { decodeTerrariumPixels } from "./ElevationEncoding";
 
 export class TerrariumDecoder {
   private readonly forceMainThread: boolean;
@@ -53,12 +43,17 @@ export class TerrariumDecoder {
     this.worker = this.createWorker();
   }
 
-  async decode(width: number, height: number, pixels: Uint8ClampedArray): Promise<Float32Array> {
+  async decode(
+    width: number,
+    height: number,
+    pixels: Uint8ClampedArray,
+    encoding: ElevationEncoding = "terrarium"
+  ): Promise<Float32Array> {
     this.requestCount += 1;
 
     if (!this.worker) {
       this.fallbackCount += 1;
-      return decodeTerrariumPixels(width, height, pixels);
+      return decodeElevationPixels(encoding, width, height, pixels);
     }
 
     this.workerHitCount += 1;
@@ -69,6 +64,7 @@ export class TerrariumDecoder {
       this.pending.set(id, { resolve, reject });
       const request: TerrariumDecodeWorkerRequest = {
         id,
+        encoding,
         width,
         height,
         buffer: pixels.slice().buffer

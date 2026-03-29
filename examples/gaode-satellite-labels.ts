@@ -7,9 +7,9 @@ export function bootstrap(): void {
 
   app.innerHTML = `
     <main class="demo-shell">
-      <a class="back-link" href="/">Back to Demos</a>
+      <a class="back-link" href="/">返回演示列表</a>
       <div class="demo-viewport" id="globe-stage"></div>
-      <div class="demo-status" id="status-output">Loading Gaode satellite + labels...</div>
+      <div class="demo-status" id="status-output">正在加载高德卫星 + 标注...</div>
     </main>
   `;
 
