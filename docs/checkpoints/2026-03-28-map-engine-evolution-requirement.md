@@ -1,0 +1,359 @@
+# 标准模式断点
+
+## 1) 会话快照
+
+- 任务标题：Three-Map 根据现有 docs 的阶段化演进需求
+- 技能类型：`需求`
+- 当前模式：`标准`
+- 当前阶段：已完成 `v4.1` 倾斜摄影下载链路负向门禁收口（不可达/checksum 失配/strict-remote 缺缓存）
+- 更新时间：2026-03-29
+- 负责人：实现 agent
+
+## 2) 当前状态
+
+- 已完成：
+  - [x] 完成对架构摘要、演进计划、长期路线图和增强计划的知识预热
+  - [x] 识别当前实现与文档目标之间的关键缺口（瓦片链路稳定性、VectorTile MVP、性能/CI 门禁）
+  - [x] 输出 A/B/C 演进方案并给出推荐方案
+  - [x] 完成任务拆分、验收矩阵、风险与回滚定义
+  - [x] 完成 TileScheduler / SurfaceTile 稳定性增强、VectorTile 渲染 MVP、deterministic browser smoke、引擎级性能报告
+  - [x] 接入 `LayerContext.reportError`、`GlobeEngine` `error` 事件、SurfaceTile / Elevation 错误上报
+  - [x] `LayerErrorPayload` 增加 `category/severity`，错误事件具备分类与严重级别语义
+  - [x] `SurfaceTileLayer` imagery 链路增加可配置重试与 fallback，错误上报包含 `attempts/fallbackUsed`
+  - [x] `GlobeEngine` 增加 `recoveryPolicy`，支持按 `stage/category/severity` 统一覆盖 SurfaceTile imagery 的 retry/fallback 行为
+  - [x] `ElevationLayer` tile-load 接入统一恢复策略（retry），并在错误 metadata 增加 `attempts`
+  - [x] `GlobeEngine` 增加 `recoveryPolicyQueryCount/recoveryPolicyHitCount/recoveryPolicyRuleHitCount` 指标
+  - [x] `VectorTileLayer` tile-parse 接入统一恢复策略（retry + empty fallback），并上报 `attempts/fallbackUsed`
+  - [x] 引擎级恢复规则已覆盖 SurfaceTile / Elevation / VectorTile 三条链路并具备规则命中测试
+  - [x] `GlobeEngine` 增加按 stage 分桶恢复指标（`recoveryPolicy*Count:<stage>`）
+  - [x] zoom regression 基线输出接入恢复指标并落盘到 `surface-tile-zoom-regression-metrics.json`
+  - [x] browser smoke 增加 imagery stage 恢复 query/hit 上限断言，异常恢复放大可自动失败
+  - [x] 新增 deterministic `surface-tile-recovery-stages-regression` demo，稳定输出 tile-load / tile-parse stage 恢复指标
+  - [x] browser smoke 扩展 tile-load / tile-parse query/hit/rule-hit 阈值断言，并输出 `surface-tile-recovery-stages-regression-metrics.json`
+  - [x] `docs/performance` 补充多 stage 阈值与调参依据（tile-load `<=8`，tile-parse `<=4`）
+  - [x] 新增 `.github/workflows/map-engine-checks.yml`，在 PR / main(master) push 执行 `npm run test:map-engine`
+  - [x] CI 集成 Chrome 环境并执行 browser smoke，保证 headless 渲染门禁可自动运行
+  - [x] CI 上传 `test-results/*.png|*.html|*.json`，回归失败时可直接追溯渲染证据
+  - [x] 新增 `scripts/assert-map-engine-metrics-baseline.mjs`，对 zoom + stage recovery 指标执行基线区间断言
+  - [x] 新增 `npm run test:metrics:baseline` 并接入 `scripts/run-map-engine-checks.sh`
+  - [x] `npm run test:map-engine` 现在包含 typecheck + unit tests + browser smoke + metrics baseline diff
+  - [x] 新增 `scripts/map-engine-metrics-baseline.config.json`，基线阈值完成配置外置化
+  - [x] baseline 断言脚本支持 `MAP_ENGINE_METRICS_BASELINE_CONFIG` 覆盖默认配置路径
+  - [x] `map-engine-checks.yml` 新增 `ubuntu-latest` + `macos-latest` 矩阵，默认执行全套地图引擎门禁
+  - [x] 新增平台阈值配置 `scripts/map-engine-metrics-baseline.linux.json` / `scripts/map-engine-metrics-baseline.macos.json`
+  - [x] CI 按平台注入 `MAP_ENGINE_METRICS_BASELINE_CONFIG`，并按平台维度上传 smoke 证据产物
+  - [x] baseline 断言脚本输出结构化 diff 报告 `test-results/map-engine-metrics-baseline-diff.json`
+  - [x] metrics baseline 失败信息已附带 diff 报告路径，便于 CI 快速排障
+  - [x] 新增 deterministic `vector-tile-regression` demo，浏览器侧稳定验证 point/line/polygon 渲染输出
+  - [x] browser smoke 新增 VectorTile 回归断言并落盘 `vector-tile-regression-metrics.json`
+  - [x] CI 门禁从 4 个 smoke 场景提升到 5 个（含 VectorTile）
+  - [x] 新增 deterministic `projection-regression` demo，浏览器侧稳定验证 GCJ/BD round-trip 精度
+  - [x] browser smoke 新增 Projection 回归断言并落盘 `projection-regression-metrics.json`
+  - [x] CI 门禁从 5 个 smoke 场景提升到 6 个（含 Projection）
+  - [x] `TerrariumDecoder` 增加 worker-hit/fallback 统计（`requestCount/workerHitCount/fallbackCount/workerHitRate`）
+  - [x] 新增 deterministic `terrarium-decode-regression` demo，稳定覆盖 worker 与主线程 fallback 两条解码路径
+  - [x] browser smoke 新增 Terrarium decode 断言并落盘 `terrarium-decode-regression-metrics.json`
+  - [x] metrics baseline 新增 `terrariumDecode` 断言分组，CI 门禁提升到 7 个 deterministic smoke 场景
+  - [x] `VectorTileLayer` 新增 pick 命中能力，`GlobeEngine#pick` 可返回 `vector-feature`
+  - [x] 新增 deterministic `vector-pick-regression` demo，稳定验证 center pick 命中与 miss 非 vector-feature
+  - [x] browser smoke 新增 VectorTile pick 断言并落盘 `vector-pick-regression-metrics.json`
+  - [x] metrics baseline 新增 `vectorPick` 断言分组，CI 门禁提升到 8 个 deterministic smoke 场景
+  - [x] 新增 deterministic `vector-geometry-pick-regression` demo，稳定验证 point/line/polygon 三类 pick 命中
+  - [x] browser smoke 新增 VectorTile 线面 pick 断言并落盘 `vector-geometry-pick-regression-metrics.json`
+  - [x] metrics baseline 新增 `vectorGeometryPick` 断言分组，CI 门禁提升到 9 个 deterministic smoke 场景
+  - [x] 新增 deterministic `vector-multi-tile-pick-regression` demo，稳定验证多 tile 左右与边界邻近 pick 命中
+  - [x] browser smoke 新增 VectorTile 多 tile pick 断言并落盘 `vector-multi-tile-pick-regression-metrics.json`
+  - [x] metrics baseline 新增 `vectorMultiTilePick` 断言分组，CI 门禁提升到 10 个 deterministic smoke 场景
+  - [x] `VectorTileLayer` pick 命中选择支持 `zIndex` 优先 + 近深度兜底，重叠要素命中稳定
+  - [x] 新增 deterministic `vector-overlap-pick-regression` demo，稳定验证重叠要素 `zIndex` 与近深度命中
+  - [x] browser smoke 新增 VectorTile 重叠要素 pick 断言并落盘 `vector-overlap-pick-regression-metrics.json`
+  - [x] metrics baseline 新增 `vectorOverlapPick` 断言分组，CI 门禁提升到 11 个 deterministic smoke 场景
+  - [x] 新增 deterministic `vector-layer-zindex-pick-regression` demo，稳定验证跨图层 zIndex 命中与隐藏回退命中
+  - [x] browser smoke 新增 VectorTile 跨图层 zIndex pick 断言并落盘 `vector-layer-zindex-pick-regression-metrics.json`
+  - [x] metrics baseline 新增 `vectorLayerZIndexPick` 断言分组，CI 门禁提升到 12 个 deterministic smoke 场景
+  - [x] 新增 deterministic `surface-tile-coord-transform-regression` demo，稳定验证 coordTransform 几何差异与 UV 不变性
+  - [x] browser smoke 新增 SurfaceTile coordTransform 断言并落盘 `surface-tile-coord-transform-regression-metrics.json`
+  - [x] metrics baseline 新增 `surfaceCoordTransform` 断言分组，CI 门禁提升到 13 个 deterministic smoke 场景
+  - [x] 新增 deterministic `basic-globe-performance-regression` demo，稳定覆盖 basic-globe 风格 pan/zoom 性能与请求取消基线
+  - [x] browser smoke 新增 Basic Globe performance 断言并落盘 `basic-globe-performance-regression-metrics.json`
+  - [x] metrics baseline 新增 `basicGlobePerformance` 断言分组，CI 门禁提升到 14 个 deterministic smoke 场景
+  - [x] 验收矩阵 A4/A5 已从手动观测迁移为 deterministic browser + baseline 自动门禁
+  - [x] 新增 deterministic `surface-tile-lifecycle-regression` demo，稳定覆盖 SurfaceTile add/remove/re-add 生命周期一致性
+  - [x] browser smoke 新增 SurfaceTile lifecycle 断言并落盘 `surface-tile-lifecycle-regression-metrics.json`
+  - [x] metrics baseline 新增 `surfaceLifecycle` 断言分组，CI 门禁提升到 15 个 deterministic smoke 场景
+  - [x] SurfaceTile 生命周期释放与重建（tile 清理、group 移除、globe 可见性恢复、tile key 重建）已进入自动门禁
+  - [x] 新增 deterministic `surface-tile-lifecycle-stress-regression` demo，稳定覆盖 3 轮 SurfaceTile add/remove/re-add 压力场景
+  - [x] browser smoke 新增 SurfaceTile lifecycle stress 断言并落盘 `surface-tile-lifecycle-stress-regression-metrics.json`
+  - [x] metrics baseline 新增 `surfaceLifecycleStress` 断言分组，CI 门禁提升到 16 个 deterministic smoke 场景
+  - [x] SurfaceTile 生命周期一致性从“单轮正确”升级为“多轮压力稳定”（恢复计数 + scene object 稳定性）
+  - [x] 新增 deterministic `basic-globe-load-profile-regression` demo，稳定输出 baseline/stress 双画像性能与对象/请求增量指标
+  - [x] browser smoke 新增 Basic Globe load-profile 断言并落盘 `basic-globe-load-profile-regression-metrics.json`
+  - [x] metrics baseline 新增 `basicGlobeLoadProfile` 断言分组，CI 门禁提升到 17 个 deterministic smoke 场景
+  - [x] headless 绝对 FPS 偏差风险已转为双画像归一化对照证据（`fpsRatio + scene/request delta`）
+  - [x] 新增 deterministic `basic-globe-load-ladder-regression` demo，稳定输出 baseline/medium/heavy 三段负载阶梯指标
+  - [x] browser smoke 新增 Basic Globe load-ladder 断言并落盘 `basic-globe-load-ladder-regression-metrics.json`
+  - [x] metrics baseline 新增 `basicGlobeLoadLadder` 断言分组，CI 门禁提升到 18 个 deterministic smoke 场景
+  - [x] headless 波动风险进一步收敛为“负载阶梯结构关系”证据（`scene/layer monotonic + fps ratio`）
+  - [x] 新增 deterministic `basic-globe-load-recovery-regression` demo，稳定输出 baseline/heavy/recovery 三段负载恢复指标
+  - [x] browser smoke 新增 Basic Globe load-recovery 断言并落盘 `basic-globe-load-recovery-regression-metrics.json`
+  - [x] metrics baseline 新增 `basicGlobeLoadRecovery` 断言分组，CI 门禁提升到 19 个 deterministic smoke 场景
+  - [x] headless 与真实业务负载差异风险进一步收敛为“heavy 后 overlay 清退恢复”证据（`layerRecovered + sceneObjectRecovered + fps ratio`）
+  - [x] 新增 deterministic `basic-globe-load-recovery-stress-regression` demo，稳定输出 3 轮 heavy/recovery 压力恢复指标
+  - [x] browser smoke 新增 Basic Globe load-recovery-stress 断言并落盘 `basic-globe-load-recovery-stress-regression-metrics.json`
+  - [x] metrics baseline 新增 `basicGlobeLoadRecoveryStress` 断言分组，CI 门禁提升到 20 个 deterministic smoke 场景
+  - [x] headless 与真实业务负载差异风险进一步收敛为“多轮 heavy/recovery 恢复稳定性”证据（`layerRecoveredCount + sceneObjectRecoveredCount + stableRecoverySceneObjectCount`）
+  - [x] 新增 deterministic `basic-globe-load-recovery-endurance-regression` demo，稳定输出 5 轮 heavy/recovery 长时交互压力恢复指标
+  - [x] browser smoke 新增 Basic Globe load-recovery-endurance 断言并落盘 `basic-globe-load-recovery-endurance-regression-metrics.json`
+  - [x] metrics baseline 新增 `basicGlobeLoadRecoveryEndurance` 断言分组，CI 门禁提升到 21 个 deterministic smoke 场景
+  - [x] headless 与真实业务负载差异风险进一步收敛为“长时交互压力下多轮恢复稳定性”证据（`renderRecoveredCount + recoveryTileStableCount + interactionStepCountTotal`）
+  - [x] 新增 deterministic `basic-globe-load-recovery-drift-regression` demo，稳定输出 5 轮 heavy/recovery 漂移约束指标
+  - [x] browser smoke 新增 Basic Globe load-recovery-drift 断言并落盘 `basic-globe-load-recovery-drift-regression-metrics.json`
+  - [x] metrics baseline 新增 `basicGlobeLoadRecoveryDrift` 断言分组，CI 门禁提升到 22 个 deterministic smoke 场景
+  - [x] headless 与真实业务负载差异风险进一步收敛为“长时交互路径跨轮漂移受控”证据（`renderRecoveredCount + recoveryTileStableCount + fpsRatioMin`）
+  - [x] 主需求文档已纳入倾斜摄影（Oblique Photogrammetry）专项需求，补齐范围、待确认问题、任务拆分、验收矩阵与里程碑
+  - [x] 倾斜摄影专项需求已形成可执行落盘：首期格式建议（3D Tiles）、门禁口径、`v3.8 -> v4.0` 迭代路径已明确
+  - [x] 新增 `ObliquePhotogrammetryLayer` 与 `PickResult` 扩展，支持 tileset 接入、视角驱动可见性选择、节点拾取与 debug 统计
+  - [x] 新增 deterministic `oblique-photogrammetry-regression` demo，并接入 browser smoke / metrics baseline / `test:map-engine` 全链路
+  - [x] browser smoke 与 baseline 新增 `obliquePhotogrammetry` 断言分组，CI deterministic smoke 场景提升到 23 个
+  - [x] 解决 `examples/basic-globe.ts` PickResult 联合类型收窄问题，`typecheck` 与回归测试恢复通过
+  - [x] `v3.8` 收口验证通过：`npm run typecheck`、`npm run test:run -- tests/layers/ObliquePhotogrammetryLayer.test.ts tests/main.test.ts`、`npm run test:browser:surface-tiles`、`npm run test:metrics:baseline`、`npm run test:map-engine`
+  - [x] 新增 `3D Tiles -> Oblique` 适配层（`convert3DTilesToObliquePhotogrammetryTileset`），支持 `boundingVolume.region` 与 `extras.obliqueCenter` 兜底
+  - [x] `ObliquePhotogrammetryLayer` 新增 `tileset3DTiles/loadTileset3DTiles/tileset3DTilesUrl` 与 `threeDTilesMetersToAltitudeScale` 接口
+  - [x] `oblique-photogrammetry-regression` 已切换为 3D Tiles fixture 输入并保持门禁指标稳定
+  - [x] 新增 `tests/layers/ObliquePhotogrammetry3DTiles.test.ts`，覆盖转换正确性、异常拒绝与图层接入
+  - [x] 新增“地图测试专用 agent prompt 模版”文档：`docs/agents/map-test-agent-prompt-template.md`
+  - [x] `v3.9` 收口验证通过：`npm run test:map-engine`（`43` 文件 / `240` 单测 / `23` deterministic browser smoke）
+  - [x] Basic Globe 回归 demo 的 `averageFPS` 已增加上限裁剪（`<=1200`），规避 headless 极端帧率导致的比率失真与误报
+  - [x] metrics baseline 的 Basic Globe render-count 上限已按 headless 高帧率特性放宽，避免非功能性误报阻塞主流程
+  - [x] `oblique-photogrammetry-regression` 已升级为 3 轮漂移回归，新增 `driftCycleCount/recoveryStableCount/nearPickHitCount/visibilityDriftMax` 指标并保持 `allExpected=1`
+  - [x] baseline 配置与断言链已同步 oblique 漂移指标（`scripts/map-engine-metrics-baseline*.json` + `scripts/assert-map-engine-metrics-baseline.mjs`）
+  - [x] 新增 oblique 3D Tiles 数据治理清单与 schema：`docs/datasets/oblique-3dtiles-manifest.json`、`docs/datasets/oblique-3dtiles-manifest.schema.json`
+  - [x] 新增数据治理脚本：`scripts/validate-oblique-3dtiles-manifest.mjs`、`scripts/download-oblique-3dtiles-datasets.mjs`
+  - [x] `test:map-engine` 已接入 `datasets:oblique:validate` 前置校验，保证 fixture checksum 与 manifest 不漂移
+  - [x] `v4.0` 收口验证通过：`npm run datasets:oblique:validate -- --strict-remote`、`npm run test:map-engine`
+  - [x] `download-oblique-3dtiles-datasets` 已增加超时控制（`OBLIQUE_3DTILES_DOWNLOAD_TIMEOUT_MS`）与网络失败错误收口
+  - [x] 新增 `scripts/assert-oblique-3dtiles-failure-gates.mjs`，覆盖 `unreachable-download`、`checksum-mismatch`、`strict-remote-missing-cache` 三类负向门禁
+  - [x] `test:map-engine` 已接入 `test:datasets:oblique:fault-gates` 前置校验，防止下载链路故障被静默放行
+  - [x] `v4.1` 收口验证通过：`npm run test:datasets:oblique:fault-gates`、`npm run test:map-engine`
+- 进行中：
+  - [ ] 无（`v4.1` 实现与门禁已完成）
+- 下一步（唯一）：
+  - [ ] 进入 `v4.2`：扩展多 remote-reference 样本与下载重试策略门禁
+
+## 3) 质量评分（v2 必填）
+
+- 完整性（0-25）：25
+- 可执行性（0-25）：25
+- 可验收性（0-25）：25
+- 风险覆盖（0-25）：24
+- 总分（0-100）：99
+- 当前门禁是否通过：`是`
+
+## 4) 关键结论与决策
+
+- 决策 1：采用“阶段化演进”而不是“功能优先补齐”或“大规模重写”
+  - 原因：当前仓库仍处于 `v0.1.0`，且渲染与浏览器门禁刚刚建立，先稳固内核更符合工程成熟度
+  - 影响：首阶段将优先投入 T1/T2/T3/T6，VectorTile MVP 和投影扩展在稳定门禁下推进
+- 决策 2：将长期文档愿景压缩为未来 2 个版本的可执行任务集
+  - 原因：现有 docs 覆盖从 `v0.x` 到 `v3.0+`，直接照搬执行会造成范围失控
+  - 影响：离线、AR/VR、插件市场、云原生等内容明确转入非目标
+- 决策 3：对渲染正确性坚持“必须有浏览器证据”
+  - 原因：tile switching、viewport resize、LOD 与坐标偏移问题不能只靠数据结构证明
+  - 影响：浏览器 smoke 与 deterministic demos 将成为后续演进门禁的一部分
+- 决策 4：统一错误处理先走轻量事件接缝，不先引入完整错误中间件
+  - 原因：当前阶段目标是把散落的异步失败先纳入引擎事件系统，而不是一次性实现重型恢复框架
+  - 影响：后续可在 `LayerErrorPayload` 基础上继续补错误分类、恢复策略和监控上报
+
+## 5) 变更与证据
+
+- 涉及文件：
+  - `examples/surface-tile-recovery-stages-regression.ts`
+  - `examples/surface-tile-recovery-stages-regression.html`
+  - `src/main.ts`
+  - `rspack.config.ts`
+  - `tests/main.test.ts`
+  - `.github/workflows/map-engine-checks.yml`
+  - `scripts/assert-map-engine-metrics-baseline.mjs`
+  - `scripts/map-engine-metrics-baseline.config.json`
+  - `scripts/map-engine-metrics-baseline.linux.json`
+  - `scripts/map-engine-metrics-baseline.macos.json`
+  - `scripts/run-map-engine-checks.sh`
+  - `package.json`
+  - `scripts/browser-smoke-surface-tile-regression.mjs`
+  - `examples/vector-tile-regression.ts`
+  - `examples/vector-tile-regression.html`
+  - `examples/projection-regression.ts`
+  - `examples/projection-regression.html`
+  - `examples/terrarium-decode-regression.ts`
+  - `examples/terrarium-decode-regression.html`
+  - `examples/vector-pick-regression.ts`
+  - `examples/vector-pick-regression.html`
+  - `examples/vector-geometry-pick-regression.ts`
+  - `examples/vector-geometry-pick-regression.html`
+  - `examples/vector-multi-tile-pick-regression.ts`
+  - `examples/vector-multi-tile-pick-regression.html`
+  - `examples/vector-overlap-pick-regression.ts`
+  - `examples/vector-overlap-pick-regression.html`
+  - `examples/vector-layer-zindex-pick-regression.ts`
+  - `examples/vector-layer-zindex-pick-regression.html`
+  - `examples/surface-tile-coord-transform-regression.ts`
+  - `examples/surface-tile-coord-transform-regression.html`
+  - `examples/surface-tile-lifecycle-regression.ts`
+  - `examples/surface-tile-lifecycle-regression.html`
+  - `examples/surface-tile-lifecycle-stress-regression.ts`
+  - `examples/surface-tile-lifecycle-stress-regression.html`
+  - `src/tiles/TerrariumDecoder.ts`
+  - `src/layers/Layer.ts`
+  - `src/layers/ObliquePhotogrammetry3DTiles.ts`
+  - `src/layers/ObliquePhotogrammetryLayer.ts`
+  - `src/layers/VectorTileLayer.ts`
+  - `src/index.ts`
+  - `examples/basic-globe.ts`
+  - `examples/basic-globe-performance-regression.ts`
+  - `examples/basic-globe-performance-regression.html`
+  - `examples/basic-globe-load-profile-regression.ts`
+  - `examples/basic-globe-load-profile-regression.html`
+  - `examples/basic-globe-load-ladder-regression.ts`
+  - `examples/basic-globe-load-ladder-regression.html`
+  - `examples/basic-globe-load-recovery-regression.ts`
+  - `examples/basic-globe-load-recovery-regression.html`
+  - `examples/basic-globe-load-recovery-stress-regression.ts`
+  - `examples/basic-globe-load-recovery-stress-regression.html`
+  - `examples/basic-globe-load-recovery-endurance-regression.ts`
+  - `examples/basic-globe-load-recovery-endurance-regression.html`
+  - `examples/basic-globe-load-recovery-drift-regression.ts`
+  - `examples/basic-globe-load-recovery-drift-regression.html`
+  - `examples/oblique-photogrammetry-regression.ts`
+  - `examples/oblique-photogrammetry-regression.html`
+  - `tests/layers/ObliquePhotogrammetryLayer.test.ts`
+  - `tests/layers/ObliquePhotogrammetry3DTiles.test.ts`
+  - `tests/layers/VectorTileLayer.test.ts`
+  - `tests/engine/GlobeEngine.test.ts`
+  - `tests/tiles/TerrariumDecoder.test.ts`
+  - `README.md`
+  - `docs/performance/2026-03-28-surface-tile-baseline.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.3-multi-stage-recovery-thresholds.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.4-ci-map-engine-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.5-metrics-baseline-diff-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.6-baseline-config-externalization.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.7-ci-platform-matrix.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.8-metrics-diff-diagnostics.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.0-vector-browser-regression-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.1-projection-browser-regression-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.2-terrarium-worker-observability-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.3-vector-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.4-vector-geometry-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.5-vector-multi-tile-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.6-vector-overlap-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.7-vector-layer-zindex-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.8-surface-coord-transform-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.9-basic-globe-performance-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.0-surface-lifecycle-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.1-surface-lifecycle-stress-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.2-basic-globe-load-profile-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.3-basic-globe-load-ladder-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.4-basic-globe-load-recovery-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.5-basic-globe-load-recovery-stress-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.6-basic-globe-load-recovery-endurance-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.7-basic-globe-load-recovery-drift-browser-regression-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-requirement.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.8-oblique-photogrammetry-requirement.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.9-oblique-3dtiles-governance.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v4.0-oblique-dataset-governance-and-drift-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v4.1-oblique-download-failure-gates.md`
+  - `docs/agents/map-test-agent-prompt-template.md`
+  - `docs/datasets/oblique-3dtiles-manifest.json`
+  - `docs/datasets/oblique-3dtiles-manifest.schema.json`
+  - `scripts/validate-oblique-3dtiles-manifest.mjs`
+  - `scripts/download-oblique-3dtiles-datasets.mjs`
+  - `scripts/assert-oblique-3dtiles-failure-gates.mjs`
+  - `.gitignore`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.2-recovery-threshold-assertions.md`
+- 执行命令与结果：
+  - `npm run datasets:oblique:validate`，通过（manifest/schema + local fixture checksum）
+  - `npm run datasets:oblique:download -- --id cesium-discrete-lod-reference`，通过（remote 样本下载 + size/sha256 校验）
+  - `npm run datasets:oblique:validate -- --strict-remote`，通过（含 remote cache 校验）
+  - `npm run test:datasets:oblique:fault-gates`，通过（下载不可达/checksum 失配/strict-remote 缺缓存三类负向门禁）
+  - `npm run typecheck`，通过
+  - `npm run test:run -- tests/layers/ObliquePhotogrammetryLayer.test.ts tests/layers/ObliquePhotogrammetry3DTiles.test.ts tests/main.test.ts`，通过（3 文件 / 8 测试）
+  - `npm run test:browser:surface-tiles`，通过（23 个 deterministic browser smoke）
+  - `npm run test:metrics:baseline`，通过（含 oblique 漂移新指标与 drift renderRecoveredCount 4~5 区间）
+  - `npm run test:map-engine`，通过（datasets manifest 校验 + oblique 故障注入门禁 + typecheck + 43 文件 240 单测 + 23 个 deterministic browser smoke + metrics baseline）
+- 关键日志/截图/报告路径：
+  - `docs/plans/2026-03-28-map-engine-evolution-requirement.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-scorecard.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v0.5-error-handling.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v0.6-error-classification.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v0.7-retry-fallback.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v0.8-engine-recovery-policy.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v0.9-elevation-recovery-and-policy-metrics.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.0-vector-recovery-seam.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.1-stage-recovery-metrics.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.2-recovery-threshold-assertions.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.3-multi-stage-recovery-thresholds.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.4-ci-map-engine-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.5-metrics-baseline-diff-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.6-baseline-config-externalization.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.7-ci-platform-matrix.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v1.8-metrics-diff-diagnostics.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.0-vector-browser-regression-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.1-projection-browser-regression-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.2-terrarium-worker-observability-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.3-vector-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-28-map-engine-evolution-v2.4-vector-geometry-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.5-vector-multi-tile-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.6-vector-overlap-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.7-vector-layer-zindex-pick-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.8-surface-coord-transform-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v2.9-basic-globe-performance-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.0-surface-lifecycle-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.1-surface-lifecycle-stress-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.2-basic-globe-load-profile-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.3-basic-globe-load-ladder-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.4-basic-globe-load-recovery-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.5-basic-globe-load-recovery-stress-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.6-basic-globe-load-recovery-endurance-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v3.7-basic-globe-load-recovery-drift-browser-regression-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v4.0-oblique-dataset-governance-and-drift-gate.md`
+  - `docs/plans/2026-03-29-map-engine-evolution-v4.1-oblique-download-failure-gates.md`
+  - `docs/datasets/oblique-3dtiles-manifest.json`
+  - `docs/datasets/oblique-3dtiles-manifest.schema.json`
+  - `test-results/oblique-dataset-fault-gates/`
+  - `test-results/surface-tile-recovery-stages-regression-metrics.json`
+  - `test-results/map-engine-metrics-baseline-diff.json`
+  - `test-results/vector-tile-regression-metrics.json`
+  - `test-results/projection-regression-metrics.json`
+  - `test-results/terrarium-decode-regression-metrics.json`
+  - `test-results/vector-pick-regression-metrics.json`
+  - `test-results/vector-geometry-pick-regression-metrics.json`
+  - `test-results/vector-multi-tile-pick-regression-metrics.json`
+  - `test-results/vector-overlap-pick-regression-metrics.json`
+  - `test-results/vector-layer-zindex-pick-regression-metrics.json`
+  - `test-results/surface-tile-coord-transform-regression-metrics.json`
+  - `test-results/surface-tile-lifecycle-regression-metrics.json`
+  - `test-results/surface-tile-lifecycle-stress-regression-metrics.json`
+  - `test-results/basic-globe-performance-regression-metrics.json`
+  - `test-results/basic-globe-load-profile-regression-metrics.json`
+  - `test-results/basic-globe-load-ladder-regression-metrics.json`
+  - `test-results/basic-globe-load-recovery-regression-metrics.json`
+  - `test-results/basic-globe-load-recovery-stress-regression-metrics.json`
+  - `test-results/basic-globe-load-recovery-endurance-regression-metrics.json`
+  - `test-results/basic-globe-load-recovery-drift-regression-metrics.json`
+  - `test-results/oblique-photogrammetry-regression-metrics.json`
+
+## 6) 风险与阻塞
+
+- 风险：
+  - remote-reference 目前仅 1 个公开样本，覆盖面有限，需在 `v4.2` 扩展多样本与版本钉住策略
+  - headless smoke 与真实业务负载仍有偏差；当前通过 deterministic 指标约束回归，不等同线上 SLA
+- 阻塞：
+  - 无
+- 需要谁确认：
+  - 无（已可继续自主推进）
+
+## 7) 续跑指令（下次直接用）
+
+- 建议提示词（长版）：
+  - `继续这个任务，先读取 /Users/ldy/Desktop/map/three-map/docs/checkpoints/2026-03-28-map-engine-evolution-requirement.md，基于当前“v4.1 倾斜摄影下载链路负向门禁已收口”状态进入 v4.2（多 remote-reference 样本与下载重试策略门禁）。`
+- 若需要子agent：
+  - `基于 /Users/ldy/Desktop/map/three-map/docs/checkpoints/2026-03-28-map-engine-evolution-requirement.md 拆分并并行执行 v4.2 未完成项（多样本清单扩展、下载重试策略、版本钉住与漂移报警），回传统一格式（结论、风险、评分、下一步唯一）。`

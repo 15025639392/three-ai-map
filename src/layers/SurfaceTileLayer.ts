@@ -12,8 +12,8 @@ import {
 import { WGS84_RADIUS } from "../geo/ellipsoid";
 import { cartographicToCartesian } from "../geo/projection";
 import { TileCache } from "../tiles/TileCache";
-import { TerrariumDecoder } from "../tiles/TerrariumDecoder";
-import { TileScheduler } from "../tiles/TileScheduler";
+import { TerrariumDecoder, TerrariumDecoderStats } from "../tiles/TerrariumDecoder";
+import { TileRequestCancelledError, TileScheduler } from "../tiles/TileScheduler";
 import { defaultTileLoader, corsTileLoader, type TileSource } from "../tiles/tileLoader";
 import {
   selectSurfaceTileCoordinates,
@@ -22,7 +22,7 @@ import {
   SurfaceTileSelectionOptions
 } from "../tiles/SurfaceTileTree";
 import { TileCoordinate } from "../tiles/TileViewport";
-import { Layer, LayerContext } from "./Layer";
+import { Layer, LayerContext, LayerErrorPayload, LayerRecoveryOverrides } from "./Layer";
 
 export interface ElevationTileData {
   width: number;
@@ -39,6 +39,33 @@ interface SurfaceTileEntry {
 class StaleSurfaceTileError extends Error {
   constructor() {
     super("Surface tile entry is no longer current");
+  }
+}
+
+class SurfaceTileLoadError extends Error {
+  readonly resource: "imagery" | "elevation";
+  readonly coordinate: TileCoordinate;
+  readonly tileKey: string;
+  readonly cause: unknown;
+  readonly attempts: number;
+  readonly fallbackUsed: boolean;
+
+  constructor(
+    resource: "imagery" | "elevation",
+    coordinate: TileCoordinate,
+    tileKey: string,
+    cause: unknown,
+    attempts = 1,
+    fallbackUsed = false
+  ) {
+    super(`Surface tile ${resource} load failed for ${tileKey}`);
+    this.name = "SurfaceTileLoadError";
+    this.resource = resource;
+    this.coordinate = coordinate;
+    this.tileKey = tileKey;
+    this.cause = cause;
+    this.attempts = attempts;
+    this.fallbackUsed = fallbackUsed;
   }
 }
 
@@ -59,9 +86,15 @@ export interface SurfaceTileLayerOptions {
   textureUvInsetPixels?: number;
   imageryTemplateUrl?: string;
   elevationTemplateUrl?: string;
+  imageryRetryAttempts?: number;
+  imageryRetryDelayMs?: number;
+  imageryFallbackColor?: string;
   selectTiles?: (options: SurfaceTileSelectionOptions) => SurfaceTileSelection;
-  loadImageryTile?: (coordinate: TileCoordinate) => Promise<TileSource>;
-  loadElevationTile?: (coordinate: TileCoordinate) => Promise<ElevationTileData>;
+  loadImageryTile?: (coordinate: TileCoordinate, signal?: AbortSignal) => Promise<TileSource>;
+  loadElevationTile?: (
+    coordinate: TileCoordinate,
+    signal?: AbortSignal
+  ) => Promise<ElevationTileData>;
   coordTransform?: CoordTransformFn;
 }
 
@@ -70,6 +103,12 @@ interface TileSkirtMask {
   right: boolean;
   bottom: boolean;
   left: boolean;
+}
+
+interface ImageryRecoveryConfig {
+  attempts: number;
+  delayMs: number;
+  fallbackColor: string | null;
 }
 
 function createTexture(source: TileSource): Texture {
@@ -109,6 +148,25 @@ function computeTextureUvInset(source: TileSource, insetPixels: number): number 
 
 function tileCoordinateKey(coordinate: TileCoordinate): string {
   return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
+}
+
+function buildSelectionInputsHash(
+  cameraMatrix: ArrayLike<number>,
+  projectionMatrix: ArrayLike<number>,
+  viewportWidth: number,
+  viewportHeight: number,
+  radius: number
+): string {
+  const formatValue = (value: number): string =>
+    Number.isFinite(value) ? value.toFixed(4) : String(value);
+
+  return [
+    formatValue(viewportWidth),
+    formatValue(viewportHeight),
+    formatValue(radius),
+    ...Array.from(cameraMatrix, formatValue),
+    ...Array.from(projectionMatrix, formatValue)
+  ].join("|");
 }
 
 function normalizeTileX(x: number, zoom: number): number {
@@ -175,9 +233,10 @@ function computeTileSkirtMasks(coordinates: TileCoordinate[]): Map<string, TileS
 async function defaultElevationLoader(
   coordinate: TileCoordinate,
   templateUrl: string,
-  decoder: TerrariumDecoder
+  decoder: TerrariumDecoder,
+  signal?: AbortSignal
 ): Promise<ElevationTileData> {
-  const source = await corsTileLoader(coordinate, templateUrl);
+  const source = await corsTileLoader(coordinate, templateUrl, signal);
   const canvas = document.createElement("canvas");
   canvas.width = "width" in source ? source.width : 256;
   canvas.height = "height" in source ? source.height : 256;
@@ -188,8 +247,15 @@ async function defaultElevationLoader(
   }
 
   context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  if (signal?.aborted) {
+    throw signal.reason;
+  }
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
   const heights = await decoder.decode(canvas.width, canvas.height, imageData.data);
+
+  if (signal?.aborted) {
+    throw signal.reason;
+  }
 
   return {
     width: canvas.width,
@@ -349,6 +415,12 @@ function buildSurfaceTileGeometry(
   return geometry;
 }
 
+function isTileRequestAbort(error: unknown): boolean {
+  return error instanceof TileRequestCancelledError || (
+    error instanceof Error && error.name === "AbortError"
+  );
+}
+
 export class SurfaceTileLayer extends Layer {
   private readonly minZoom: number;
   private readonly maxZoom: number;
@@ -359,6 +431,10 @@ export class SurfaceTileLayer extends Layer {
   private readonly elevationExaggeration: number;
   private readonly zoomExaggerationBoost: number;
   private readonly coordTransform?: CoordTransformFn;
+  private readonly imageryRetryAttempts: number;
+  private readonly imageryRetryDelayMs: number;
+  private readonly imageryFallbackColor: string | null;
+  private readonly usesDefaultTileSelector: boolean;
   private readonly selectTiles;
   private readonly imageryCache: TileCache<TileSource>;
   private readonly elevationCache: TileCache<ElevationTileData>;
@@ -370,8 +446,9 @@ export class SurfaceTileLayer extends Layer {
   private context: LayerContext | null = null;
   private readyPromise: Promise<void> = Promise.resolve();
   private currentSelectionKey = "";
+  private currentSelectionCount = 0;
   private renderInvalidationQueued = false;
-  private lastCameraMatrixHash = "";
+  private lastSelectionInputsHash = "";
 
   constructor(id: string, options: SurfaceTileLayerOptions = {}) {
     super(id);
@@ -384,6 +461,10 @@ export class SurfaceTileLayer extends Layer {
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
     this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
     this.coordTransform = options.coordTransform;
+    this.imageryRetryAttempts = Math.max(0, Math.floor(options.imageryRetryAttempts ?? 0));
+    this.imageryRetryDelayMs = Math.max(0, Math.floor(options.imageryRetryDelayMs ?? 0));
+    this.imageryFallbackColor = options.imageryFallbackColor ?? null;
+    this.usesDefaultTileSelector = !options.selectTiles;
     this.selectTiles = options.selectTiles ?? selectSurfaceTileCoordinates;
     this.imageryCache = new TileCache<TileSource>(options.cacheSize ?? 96, {
       onEvict: (_key, source) => {
@@ -405,14 +486,15 @@ export class SurfaceTileLayer extends Layer {
       concurrency: options.concurrency ?? 6,
       loadTile:
         options.loadImageryTile ??
-        ((coordinate: TileCoordinate) => defaultTileLoader(coordinate, imageryTemplateUrl))
+        ((coordinate: TileCoordinate, signal?: AbortSignal) =>
+          defaultTileLoader(coordinate, imageryTemplateUrl, signal))
     });
     this.elevationScheduler = new TileScheduler({
       concurrency: options.concurrency ?? 6,
       loadTile:
         options.loadElevationTile ??
-        ((coordinate: TileCoordinate) =>
-          defaultElevationLoader(coordinate, elevationTemplateUrl, this.terrariumDecoder))
+        ((coordinate: TileCoordinate, signal?: AbortSignal) =>
+          defaultElevationLoader(coordinate, elevationTemplateUrl, this.terrariumDecoder, signal))
     });
     this.group.name = id;
   }
@@ -430,6 +512,8 @@ export class SurfaceTileLayer extends Layer {
     this.clearActiveTiles();
     this.context = null;
     this.currentSelectionKey = "";
+    this.currentSelectionCount = 0;
+    this.lastSelectionInputsHash = "";
   }
 
   update(_deltaTime: number, context: LayerContext): void {
@@ -444,6 +528,22 @@ export class SurfaceTileLayer extends Layer {
     return [...this.activeTiles.keys()].sort();
   }
 
+  getDebugStats(): {
+    activeTileCount: number;
+    activeTileKeys: string[];
+    imagery: ReturnType<TileScheduler<TileSource, TileCoordinate>["getStats"]>;
+    elevation: ReturnType<TileScheduler<ElevationTileData, TileCoordinate>["getStats"]>;
+    terrariumDecode: TerrariumDecoderStats;
+  } {
+    return {
+      activeTileCount: this.activeTiles.size,
+      activeTileKeys: this.getActiveTileKeys(),
+      imagery: this.imageryScheduler.getStats(),
+      elevation: this.elevationScheduler.getStats(),
+      terrariumDecode: this.terrariumDecoder.getStats()
+    };
+  }
+
   dispose(): void {
     this.clearActiveTiles();
     this.imageryCache.clear();
@@ -454,18 +554,30 @@ export class SurfaceTileLayer extends Layer {
   }
 
   private syncTiles(context: LayerContext): void {
-    const cameraMatrix = context.camera.matrixWorld.elements;
-    const cameraHash = cameraMatrix[12].toFixed(4) + cameraMatrix[13].toFixed(4) + cameraMatrix[14].toFixed(4);
-
-    if (cameraHash === this.lastCameraMatrixHash && this.currentSelectionKey) {
-      return;
-    }
-
-    this.lastCameraMatrixHash = cameraHash;
     const viewportWidth =
       context.rendererElement?.clientWidth || context.rendererElement?.width || 1;
     const viewportHeight =
       context.rendererElement?.clientHeight || context.rendererElement?.height || 1;
+
+    if (this.usesDefaultTileSelector) {
+      const selectionInputsHash = buildSelectionInputsHash(
+        context.camera.matrixWorld.elements,
+        context.camera.projectionMatrix.elements,
+        viewportWidth,
+        viewportHeight,
+        context.radius
+      );
+
+      if (
+        selectionInputsHash === this.lastSelectionInputsHash &&
+        this.activeTiles.size === this.currentSelectionCount
+      ) {
+        return;
+      }
+
+      this.lastSelectionInputsHash = selectionInputsHash;
+    }
+
     const selection = this.selectTiles({
       camera: context.camera,
       viewportWidth,
@@ -487,6 +599,7 @@ export class SurfaceTileLayer extends Layer {
 
     if (!selectionKey) {
       this.currentSelectionKey = "";
+      this.currentSelectionCount = 0;
       const removedAny = this.clearActiveTiles();
       this.readyPromise = Promise.resolve();
 
@@ -502,6 +615,7 @@ export class SurfaceTileLayer extends Layer {
     }
 
     this.currentSelectionKey = selectionKey;
+    this.currentSelectionCount = selection.coordinates.length;
     const nextKeys = new Set(
       selection.coordinates.map((coordinate) => tileCoordinateKey(coordinate))
     );
@@ -570,11 +684,10 @@ export class SurfaceTileLayer extends Layer {
       this.group.add(mesh);
       this.invalidateRender();
     }).catch((error) => {
-      if (error instanceof StaleSurfaceTileError) {
+      if (error instanceof StaleSurfaceTileError || isTileRequestAbort(error)) {
         return;
       }
-
-      console.error(`[SurfaceTileLayer] Failed to load tile ${key}:`, error);
+      this.reportTileError(key, coordinate, error);
 
       if (this.activeTiles.get(key) === entry) {
         this.activeTiles.delete(key);
@@ -596,7 +709,13 @@ export class SurfaceTileLayer extends Layer {
     let imagery = this.imageryCache.get(key);
 
     if (!imagery) {
-      imagery = await this.imageryScheduler.request(key, coordinate);
+      imagery = await this.loadImageryWithRecovery(
+        key,
+        coordinate,
+        isCurrent,
+        this.resolveImageryRecoveryConfig()
+      );
+
       if (!isCurrent()) {
         throw new StaleSurfaceTileError();
       }
@@ -610,7 +729,15 @@ export class SurfaceTileLayer extends Layer {
     let elevation = this.elevationCache.get(key);
 
     if (!elevation) {
-      elevation = await this.elevationScheduler.request(key, coordinate);
+      try {
+        elevation = await this.elevationScheduler.request(key, coordinate);
+      } catch (error) {
+        if (isTileRequestAbort(error)) {
+          throw error;
+        }
+        throw new SurfaceTileLoadError("elevation", coordinate, key, error, 1, false);
+      }
+
       if (!isCurrent()) {
         throw new StaleSurfaceTileError();
       }
@@ -658,6 +785,9 @@ export class SurfaceTileLayer extends Layer {
       return false;
     }
 
+    this.imageryScheduler.cancel(key);
+    this.elevationScheduler.cancel(key);
+
     if (entry.mesh) {
       this.group.remove(entry.mesh);
       entry.mesh.geometry.dispose();
@@ -701,5 +831,178 @@ export class SurfaceTileLayer extends Layer {
       Math.min(1, (zoom - this.minZoom) / (this.maxZoom - this.minZoom))
     );
     return this.elevationExaggeration * (1 + normalizedZoom * this.zoomExaggerationBoost);
+  }
+
+  private async loadImageryWithRecovery(
+    key: string,
+    coordinate: TileCoordinate,
+    isCurrent: () => boolean,
+    recoveryConfig: ImageryRecoveryConfig
+  ): Promise<TileSource> {
+    const maxAttempts = recoveryConfig.attempts + 1;
+    let lastError: unknown = new Error(`Imagery request failed for ${key}`);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (!isCurrent()) {
+        throw new StaleSurfaceTileError();
+      }
+
+      try {
+        return await this.imageryScheduler.request(key, coordinate);
+      } catch (error) {
+        if (isTileRequestAbort(error)) {
+          throw error;
+        }
+
+        lastError = error;
+
+        if (attempt < maxAttempts) {
+          await this.waitRetryDelay(recoveryConfig.delayMs);
+          continue;
+        }
+      }
+    }
+
+    if (!isCurrent()) {
+      throw new StaleSurfaceTileError();
+    }
+
+    if (recoveryConfig.fallbackColor) {
+      this.reportImageryFallback(key, coordinate, lastError, maxAttempts);
+      return this.createSolidColorFallback(recoveryConfig.fallbackColor);
+    }
+
+    throw new SurfaceTileLoadError("imagery", coordinate, key, lastError, maxAttempts, false);
+  }
+
+  private async waitRetryDelay(delayMs: number): Promise<void> {
+    if (delayMs <= 0) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, delayMs);
+    });
+  }
+
+  private resolveImageryRecoveryConfig(): ImageryRecoveryConfig {
+    const overrides = this.context?.resolveRecovery?.({
+      layerId: this.id,
+      stage: "imagery",
+      category: "network",
+      severity: "warn"
+    });
+    return {
+      attempts: this.normalizeRecoveryAttempts(overrides),
+      delayMs: this.normalizeRecoveryDelay(overrides),
+      fallbackColor:
+        overrides?.imageryFallbackColor !== undefined
+          ? overrides.imageryFallbackColor
+          : this.imageryFallbackColor
+    };
+  }
+
+  private normalizeRecoveryAttempts(overrides?: LayerRecoveryOverrides): number {
+    return Math.max(
+      0,
+      Math.floor(overrides?.imageryRetryAttempts ?? this.imageryRetryAttempts)
+    );
+  }
+
+  private normalizeRecoveryDelay(overrides?: LayerRecoveryOverrides): number {
+    return Math.max(0, Math.floor(overrides?.imageryRetryDelayMs ?? this.imageryRetryDelayMs));
+  }
+
+  private createSolidColorFallback(color: string): HTMLCanvasElement {
+    const size = Math.max(1, this.tileSize);
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    let context: CanvasRenderingContext2D | null = null;
+
+    try {
+      context = canvas.getContext("2d");
+    } catch {
+      context = null;
+    }
+
+    if (context) {
+      context.fillStyle = color;
+      context.fillRect(0, 0, size, size);
+    }
+
+    return canvas;
+  }
+
+  private reportImageryFallback(
+    key: string,
+    coordinate: TileCoordinate,
+    error: unknown,
+    attempts: number
+  ): void {
+    this.context?.reportError?.({
+      source: "layer",
+      layerId: this.id,
+      stage: "imagery",
+      category: "network",
+      severity: "warn",
+      error,
+      recoverable: true,
+      tileKey: key,
+      metadata: {
+        coordinate,
+        attempts,
+        fallbackUsed: true
+      }
+    });
+  }
+
+  private reportTileError(key: string, coordinate: TileCoordinate, error: unknown): void {
+    const payload = this.createLayerErrorPayload(key, coordinate, error);
+
+    if (this.context?.reportError) {
+      this.context.reportError(payload);
+      return;
+    }
+
+    console.error(`[SurfaceTileLayer] Failed to load tile ${key}:`, payload.error);
+  }
+
+  private createLayerErrorPayload(
+    key: string,
+    coordinate: TileCoordinate,
+    error: unknown
+  ): LayerErrorPayload {
+    if (error instanceof SurfaceTileLoadError) {
+      return {
+        source: "layer",
+        layerId: this.id,
+        stage: error.resource,
+        category: "network",
+        severity: "warn",
+        error: error.cause,
+        recoverable: true,
+        tileKey: error.tileKey,
+        metadata: {
+          coordinate: error.coordinate,
+          attempts: error.attempts,
+          fallbackUsed: error.fallbackUsed
+        }
+      };
+    }
+
+    return {
+      source: "layer",
+      layerId: this.id,
+      stage: "tile-sync",
+      category: "unknown",
+      severity: "warn",
+      error,
+      recoverable: true,
+      tileKey: key,
+      metadata: {
+        coordinate
+      }
+    };
   }
 }

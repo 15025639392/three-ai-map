@@ -1,5 +1,10 @@
 import { Camera, PerspectiveCamera, Scene } from "three";
 import { RendererSystem } from "../core/RendererSystem";
+import type {
+  LayerErrorCategory,
+  LayerErrorSeverity,
+  LayerRecoveryOverrides
+} from "../layers/Layer";
 
 export interface EngineView {
   lng: number;
@@ -21,6 +26,19 @@ export interface RendererFactoryOptions {
   clearColor?: string;
 }
 
+export interface GlobeEngineRecoveryRule {
+  layerId?: string;
+  stage?: string;
+  category?: LayerErrorCategory;
+  severity?: LayerErrorSeverity;
+  overrides: LayerRecoveryOverrides;
+}
+
+export interface GlobeEngineRecoveryPolicy {
+  defaults?: LayerRecoveryOverrides;
+  rules?: GlobeEngineRecoveryRule[];
+}
+
 export interface GlobeEngineOptions {
   container: HTMLElement;
   radius?: number;
@@ -28,6 +46,7 @@ export interface GlobeEngineOptions {
   terrainStrength?: number;
   showBaseGlobe?: boolean;
   camera?: Partial<Pick<PerspectiveCamera, "fov" | "near" | "far">>;
+  recoveryPolicy?: GlobeEngineRecoveryPolicy;
   rendererFactory?: (options: RendererFactoryOptions) => RendererAdapter;
 }
 

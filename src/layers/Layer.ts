@@ -2,6 +2,47 @@ import { PerspectiveCamera, Raycaster, Scene } from "three";
 import { Cartesian3Like, Cartographic } from "../geo/cartographic";
 import { GlobeMesh } from "../globe/GlobeMesh";
 
+export interface LayerErrorPayload {
+  source: "layer";
+  layerId: string;
+  stage: string;
+  category: LayerErrorCategory;
+  severity: LayerErrorSeverity;
+  error: unknown;
+  recoverable: boolean;
+  tileKey?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type LayerErrorCategory =
+  | "network"
+  | "data"
+  | "render"
+  | "unknown";
+
+export type LayerErrorSeverity =
+  | "warn"
+  | "error"
+  | "fatal";
+
+export interface LayerRecoveryQuery {
+  layerId: string;
+  stage: string;
+  category: LayerErrorCategory;
+  severity: LayerErrorSeverity;
+}
+
+export interface LayerRecoveryOverrides {
+  imageryRetryAttempts?: number;
+  imageryRetryDelayMs?: number;
+  imageryFallbackColor?: string | null;
+  elevationRetryAttempts?: number;
+  elevationRetryDelayMs?: number;
+  vectorParseRetryAttempts?: number;
+  vectorParseRetryDelayMs?: number;
+  vectorParseFallbackToEmpty?: boolean;
+}
+
 export interface LayerContext {
   scene: Scene;
   camera: PerspectiveCamera;
@@ -9,6 +50,8 @@ export interface LayerContext {
   radius: number;
   rendererElement?: HTMLCanvasElement;
   requestRender?: () => void;
+  reportError?: (payload: LayerErrorPayload) => void;
+  resolveRecovery?: (query: LayerRecoveryQuery) => LayerRecoveryOverrides | undefined;
 }
 
 export interface MarkerDefinition {
@@ -67,10 +110,36 @@ export interface GlobePickResult {
   cartographic: Cartographic;
 }
 
+export interface VectorFeaturePickResult {
+  type: "vector-feature";
+  layerId: string;
+  point: Cartesian3Like;
+  feature: {
+    type: "point" | "line" | "polygon";
+    layer: string;
+    geometry: number[][][];
+    properties?: Record<string, unknown>;
+  };
+}
+
+export interface ObliquePhotogrammetryNodePickResult {
+  type: "oblique-photogrammetry-node";
+  layerId: string;
+  point: Cartesian3Like;
+  node: {
+    id: string;
+    depth: number;
+    geometricError: number;
+    properties?: Record<string, unknown>;
+  };
+}
+
 export type PickResult =
   | MarkerPickResult
   | PolylinePickResult
   | PolygonPickResult
+  | VectorFeaturePickResult
+  | ObliquePhotogrammetryNodePickResult
   | GlobePickResult;
 
 export abstract class Layer {
@@ -90,6 +159,17 @@ export abstract class Layer {
 
   pick(_raycaster: Raycaster, _context: LayerContext): PickResult | null {
     return null;
+  }
+
+  protected emitLayerError(
+    context: LayerContext | null,
+    payload: Omit<LayerErrorPayload, "source" | "layerId">
+  ): void {
+    context?.reportError?.({
+      source: "layer",
+      layerId: this.id,
+      ...payload
+    });
   }
 
   dispose(): void {}

@@ -5,7 +5,6 @@ import {
   ImageryLayer,
   SurfaceTileLayer,
   AnimationManager,
-  PerformanceMonitor,
   haversineDistance
 } from "../src";
 
@@ -135,7 +134,6 @@ function buildArcRoute(from: typeof CITIES[0], to: typeof CITIES[0], segments = 
 /* ------------------------------------------------------------------ */
 
 export function runBasicGlobe(container: HTMLElement, output: HTMLElement): GlobeEngine {
-  const perfMonitor = new PerformanceMonitor();
   const animManager  = new AnimationManager();
 
   /* ---- engine ---- */
@@ -236,7 +234,19 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
     if (result.type === "marker")  { output.textContent = `marker: ${result.marker.id}`; return; }
     if (result.type === "polyline") { output.textContent = `polyline: ${result.polyline.id}`; return; }
     if (result.type === "polygon")  { output.textContent = `polygon: ${result.polygon.id}`; return; }
-    output.textContent = `lng:${result.cartographic.lng.toFixed(2)} lat:${result.cartographic.lat.toFixed(2)}`;
+    if (result.type === "oblique-photogrammetry-node") {
+      output.textContent = `oblique:${result.layerId}:${result.node.id}`;
+      return;
+    }
+    if (result.type === "vector-feature") {
+      output.textContent = `vector:${result.feature.layer}:${result.feature.type}`;
+      return;
+    }
+    if (result.type === "globe") {
+      output.textContent = `lng:${result.cartographic.lng.toFixed(2)} lat:${result.cartographic.lat.toFixed(2)}`;
+      return;
+    }
+    output.textContent = "Unsupported pick result";
   });
 
   output.textContent = "Loading globe – drag to orbit, wheel to zoom, click to inspect.";
@@ -245,10 +255,11 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   let lastTime = performance.now();
   const perfLoop = () => {
     const now = performance.now();
-    perfMonitor.update(now - lastTime);
     animManager.update(now - lastTime);
     lastTime = now;
-    (window as any).__perfMonitor = perfMonitor;
+    if (typeof (engine as { getPerformanceReport?: unknown }).getPerformanceReport === "function") {
+      (window as any).__enginePerformanceReport = engine.getPerformanceReport();
+    }
     requestAnimationFrame(perfLoop);
   };
   requestAnimationFrame(perfLoop);

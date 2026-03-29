@@ -1,6 +1,6 @@
-import { Layer, LayerContext } from "./Layer";
+import { Layer, LayerContext, LayerErrorPayload, LayerRecoveryOverrides } from "./Layer";
 import { TileCache } from "../tiles/TileCache";
-import { TileScheduler } from "../tiles/TileScheduler";
+import { TileRequestCancelledError, TileScheduler } from "../tiles/TileScheduler";
 import { TileCoordinate } from "../tiles/TileViewport";
 import { corsTileLoader, type TileSource } from "../tiles/tileLoader";
 import { ElevationSampler } from "../globe/GlobeMesh";
@@ -12,14 +12,45 @@ interface ElevationLayerOptions {
   cacheSize?: number;
   concurrency?: number;
   exaggeration?: number;
+  elevationRetryAttempts?: number;
+  elevationRetryDelayMs?: number;
   templateUrl?: string;
   loadTile?: (coordinate: TileCoordinate) => Promise<TileSource>;
+}
+
+class ElevationTileLoadError extends Error {
+  readonly coordinate: TileCoordinate;
+  readonly tileKey: string;
+  readonly cause: unknown;
+  readonly attempts: number;
+
+  constructor(coordinate: TileCoordinate, tileKey: string, cause: unknown, attempts = 1) {
+    super(`Elevation tile load failed for ${tileKey}`);
+    this.name = "ElevationTileLoadError";
+    this.coordinate = coordinate;
+    this.tileKey = tileKey;
+    this.cause = cause;
+    this.attempts = attempts;
+  }
+}
+
+interface ElevationRecoveryConfig {
+  attempts: number;
+  delayMs: number;
+}
+
+function isTileRequestAbort(error: unknown): boolean {
+  return error instanceof TileRequestCancelledError || (
+    error instanceof Error && error.name === "AbortError"
+  );
 }
 
 export class ElevationLayer extends Layer {
   private readonly zoom: number;
   private readonly tileSize: number;
   private readonly exaggeration: number;
+  private readonly elevationRetryAttempts: number;
+  private readonly elevationRetryDelayMs: number;
   private readonly cache: TileCache<TileSource>;
   private readonly scheduler: TileScheduler<TileSource, TileCoordinate>;
   private readonly canvas: HTMLCanvasElement;
@@ -32,6 +63,8 @@ export class ElevationLayer extends Layer {
     this.zoom = options.zoom ?? 3;
     this.tileSize = options.tileSize ?? 256;
     this.exaggeration = options.exaggeration ?? 1.2;
+    this.elevationRetryAttempts = Math.max(0, Math.floor(options.elevationRetryAttempts ?? 0));
+    this.elevationRetryDelayMs = Math.max(0, Math.floor(options.elevationRetryDelayMs ?? 0));
     this.cache = new TileCache<TileSource>(options.cacheSize ?? 32);
     const templateUrl =
       options.templateUrl ?? "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
@@ -49,12 +82,17 @@ export class ElevationLayer extends Layer {
     this.context = context;
 
     if (!this.loadPromise) {
-      this.loadPromise = this.loadGlobalElevation().then(() => {
-        return this.createElevationSampler().then((sampler) => {
+      this.loadPromise = this.loadGlobalElevation()
+        .then(() => this.createElevationSampler())
+        .then((sampler) => {
           context.globe.setElevationSampler(sampler, this.exaggeration);
           context.requestRender?.();
+        })
+        .catch((error) => {
+          this.reportLayerError(error);
+          throw this.unwrapReportedError(error);
         });
-      });
+      void this.loadPromise.catch(() => undefined);
     }
   }
 
@@ -92,7 +130,7 @@ export class ElevationLayer extends Layer {
     let tile = this.cache.get(key);
 
     if (!tile) {
-      tile = await this.scheduler.request(key, coordinate);
+      tile = await this.loadTileWithRecovery(key, coordinate, this.resolveElevationRecoveryConfig());
       this.cache.set(key, tile);
     }
 
@@ -109,6 +147,58 @@ export class ElevationLayer extends Layer {
       this.tileSize,
       this.tileSize
     );
+  }
+
+  private reportLayerError(error: unknown): void {
+    const payload = this.createLayerErrorPayload(error);
+
+    if (this.context?.reportError) {
+      this.context.reportError(payload);
+      return;
+    }
+
+    console.error("[ElevationLayer] Failed to build elevation sampler:", payload.error);
+  }
+
+  private createLayerErrorPayload(error: unknown): LayerErrorPayload {
+    if (error instanceof ElevationTileLoadError) {
+      return {
+        source: "layer",
+        layerId: this.id,
+        stage: "tile-load",
+        category: "network",
+        severity: "warn",
+        error: error.cause,
+        recoverable: true,
+        tileKey: error.tileKey,
+        metadata: {
+          coordinate: error.coordinate,
+          attempts: error.attempts
+        }
+      };
+    }
+
+    return {
+      source: "layer",
+      layerId: this.id,
+      stage: "sampler-build",
+      category: "data",
+      severity: "error",
+      error,
+      recoverable: false,
+      metadata: {
+        zoom: this.zoom,
+        tileSize: this.tileSize
+      }
+    };
+  }
+
+  private unwrapReportedError(error: unknown): unknown {
+    if (error instanceof ElevationTileLoadError) {
+      return error.cause;
+    }
+
+    return error;
   }
 
   private async createElevationSampler(): Promise<ElevationSampler> {
@@ -143,5 +233,68 @@ export class ElevationLayer extends Layer {
       const bottom = bottomLeft * (1 - tx) + bottomRight * tx;
       return top * (1 - ty) + bottom * ty;
     };
+  }
+
+  private async loadTileWithRecovery(
+    key: string,
+    coordinate: TileCoordinate,
+    recoveryConfig: ElevationRecoveryConfig
+  ): Promise<TileSource> {
+    const maxAttempts = recoveryConfig.attempts + 1;
+    let lastError: unknown = new Error(`Elevation tile request failed for ${key}`);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.scheduler.request(key, coordinate);
+      } catch (error) {
+        if (isTileRequestAbort(error)) {
+          throw error;
+        }
+
+        lastError = error;
+
+        if (attempt < maxAttempts) {
+          await this.waitRetryDelay(recoveryConfig.delayMs);
+          continue;
+        }
+      }
+    }
+
+    throw new ElevationTileLoadError(coordinate, key, lastError, maxAttempts);
+  }
+
+  private resolveElevationRecoveryConfig(): ElevationRecoveryConfig {
+    const overrides = this.context?.resolveRecovery?.({
+      layerId: this.id,
+      stage: "tile-load",
+      category: "network",
+      severity: "warn"
+    });
+
+    return {
+      attempts: this.normalizeRecoveryAttempts(overrides),
+      delayMs: this.normalizeRecoveryDelay(overrides)
+    };
+  }
+
+  private normalizeRecoveryAttempts(overrides?: LayerRecoveryOverrides): number {
+    return Math.max(
+      0,
+      Math.floor(overrides?.elevationRetryAttempts ?? this.elevationRetryAttempts)
+    );
+  }
+
+  private normalizeRecoveryDelay(overrides?: LayerRecoveryOverrides): number {
+    return Math.max(0, Math.floor(overrides?.elevationRetryDelayMs ?? this.elevationRetryDelayMs));
+  }
+
+  private async waitRetryDelay(delayMs: number): Promise<void> {
+    if (delayMs <= 0) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, delayMs);
+    });
   }
 }

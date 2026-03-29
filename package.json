@@ -8,9 +8,17 @@
     "build": "rspack build",
     "test": "vitest",
     "test:run": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "datasets:oblique:validate": "node scripts/validate-oblique-3dtiles-manifest.mjs",
+    "datasets:oblique:download": "node scripts/download-oblique-3dtiles-datasets.mjs",
+    "test:datasets:oblique:fault-gates": "node scripts/assert-oblique-3dtiles-failure-gates.mjs",
+    "test:browser:surface-tiles": "npm run build && node scripts/browser-smoke-surface-tile-regression.mjs",
+    "test:metrics:baseline": "node scripts/assert-map-engine-metrics-baseline.mjs",
+    "test:map-engine": "bash scripts/run-map-engine-checks.sh"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^2.0.4",
+    "pbf": "^4.0.1",
     "three": "^0.176.0"
   },
   "devDependencies": {

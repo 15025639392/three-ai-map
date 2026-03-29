@@ -11,6 +11,7 @@ import {
   ElevationTileData,
   SurfaceTileLayer
 } from "../../src/layers/SurfaceTileLayer";
+import * as surfaceTileTree from "../../src/tiles/SurfaceTileTree";
 import { TileCoordinate } from "../../src/tiles/TileViewport";
 
 function createRendererElement(width: number, height: number): HTMLCanvasElement {
@@ -118,6 +119,182 @@ describe("SurfaceTileLayer", () => {
     expect(layer.getActiveTileKeys()).toEqual(["2/3/1"]);
   });
 
+  it("aborts stale imagery requests when tile selection changes", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    let visibleTiles: TileCoordinate[] = [{ z: 2, x: 2, y: 1 }];
+    const staleImageryAborts: unknown[] = [];
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 2,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: visibleTiles
+      }),
+      loadImageryTile: async (coordinate, signal?: AbortSignal) => {
+        if (coordinate.x === 2) {
+          return new Promise<HTMLCanvasElement>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                staleImageryAborts.push(signal.reason);
+                reject(signal.reason);
+              },
+              { once: true }
+            );
+          });
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(1200)
+    });
+    const context = {
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement
+    };
+
+    layer.onAdd(context);
+    visibleTiles = [{ z: 2, x: 3, y: 1 }];
+    layer.update(0, context);
+    await layer.ready();
+
+    expect(staleImageryAborts).toHaveLength(1);
+  });
+
+  it("aborts stale elevation requests when tile selection changes", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    let visibleTiles: TileCoordinate[] = [{ z: 2, x: 2, y: 1 }];
+    const staleElevationAborts: unknown[] = [];
+    const staleElevationStarted = createDeferred<void>();
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 2,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: visibleTiles
+      }),
+      loadImageryTile: async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async (coordinate, signal?: AbortSignal) => {
+        if (coordinate.x === 2) {
+          return new Promise<ElevationTileData>((_resolve, reject) => {
+            staleElevationStarted.resolve();
+            signal?.addEventListener(
+              "abort",
+              () => {
+                staleElevationAborts.push(signal.reason);
+                reject(signal.reason);
+              },
+              { once: true }
+            );
+          });
+        }
+
+        return createElevationTile(1200);
+      }
+    });
+    const context = {
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement
+    };
+
+    layer.onAdd(context);
+    await staleElevationStarted.promise;
+    visibleTiles = [{ z: 2, x: 3, y: 1 }];
+    layer.update(0, context);
+    await layer.ready();
+
+    expect(staleElevationAborts).toHaveLength(1);
+  });
+
+  it("exposes scheduler debug stats for imagery and elevation requests", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    let visibleTiles: TileCoordinate[] = [{ z: 2, x: 2, y: 1 }];
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 2,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: visibleTiles
+      }),
+      loadImageryTile: async (coordinate, signal?: AbortSignal) => {
+        if (coordinate.x === 2) {
+          return new Promise<HTMLCanvasElement>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => reject(signal.reason),
+              { once: true }
+            );
+          });
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(1200)
+    });
+    const typedLayer = layer as SurfaceTileLayer & {
+      getDebugStats: () => {
+        activeTileCount: number;
+        imagery: { requested: number; cancelled: number; succeeded: number };
+        elevation: { requested: number; cancelled: number; succeeded: number };
+      };
+    };
+    const context = {
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement
+    };
+
+    layer.onAdd(context);
+    visibleTiles = [{ z: 2, x: 3, y: 1 }];
+    layer.update(0, context);
+    await layer.ready();
+
+    expect(typedLayer.getDebugStats()).toMatchObject({
+      activeTileCount: 1,
+      imagery: {
+        requested: 2,
+        cancelled: 1,
+        succeeded: 1
+      },
+      elevation: {
+        requested: 1,
+        cancelled: 0,
+        succeeded: 1
+      }
+    });
+  });
+
   it("does not rebuild the same pending ready aggregation on every update while the selection is unchanged", async () => {
     const rendererElement = createRendererElement(1280, 720);
     const scene = new Scene();
@@ -158,6 +335,48 @@ describe("SurfaceTileLayer", () => {
     elevationDeferred.resolve(createElevationTile(1200));
     await layer.ready();
     allSettledSpy.mockRestore();
+  });
+
+  it("recomputes default tile selection when viewport size changes without moving the camera", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    const selectTilesSpy = vi
+      .spyOn(surfaceTileTree, "selectSurfaceTileCoordinates")
+      .mockReturnValue({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      });
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 2,
+      loadImageryTile: async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(1200)
+    });
+    const context = {
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement
+    };
+
+    layer.onAdd(context);
+    await layer.ready();
+
+    Object.defineProperty(rendererElement, "clientWidth", { value: 1440, configurable: true });
+    layer.update(0, context);
+    await layer.ready();
+
+    expect(selectTilesSpy).toHaveBeenCalledTimes(2);
+    selectTilesSpy.mockRestore();
   });
 
   it("batches render invalidation when a zoom change removes multiple surface tiles", async () => {
@@ -256,7 +475,8 @@ describe("SurfaceTileLayer", () => {
 
     expect(elevationLoader).toHaveBeenCalledTimes(1);
     expect(elevationLoader).toHaveBeenCalledWith(
-      expect.objectContaining({ z: 2, x: 3, y: 1 })
+      expect.objectContaining({ z: 2, x: 3, y: 1 }),
+      expect.any(AbortSignal)
     );
   });
 
@@ -617,6 +837,176 @@ describe("SurfaceTileLayer", () => {
     if (noTransformUv && transformUv) {
       expect(transformUv[0]).toBeCloseTo(noTransformUv[0], 6);
       expect(transformUv[1]).toBeCloseTo(noTransformUv[1], 6);
+    }
+  });
+  it("reports tile load failures through LayerContext.reportError", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    const loadError = new Error("imagery failed");
+    const reportError = vi.fn();
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 2,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      }),
+      loadImageryTile: async () => {
+        throw loadError;
+      },
+      loadElevationTile: async () => createElevationTile(1200)
+    });
+    const context = {
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement,
+      reportError
+    };
+
+    layer.onAdd(context);
+    await layer.ready();
+
+    expect(reportError).toHaveBeenCalledTimes(1);
+    const payload = reportError.mock.calls[0][0] as {
+      source: string;
+      layerId: string;
+      stage: string;
+      category: string;
+      severity: string;
+      tileKey?: string;
+      metadata?: {
+        tileKey?: string;
+        coordinate?: { z: number; x: number; y: number };
+      };
+      recoverable: boolean;
+      error: Error;
+    };
+
+    expect(payload.source).toBe("layer");
+    expect(payload.layerId).toBe("surface-tiles");
+    expect(payload.recoverable).toBe(true);
+    expect(payload.stage).toBe("imagery");
+    expect(payload.category).toBe("network");
+    expect(payload.severity).toBe("warn");
+    expect(payload.tileKey ?? payload.metadata?.tileKey).toBe("2/2/1");
+    expect(payload.metadata?.coordinate).toEqual({ z: 2, x: 2, y: 1 });
+    expect(payload.error).toBe(loadError);
+  });
+
+  it("retries imagery requests and succeeds before exhausting retry budget", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    const reportError = vi.fn();
+    let attempt = 0;
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 2,
+      imageryRetryAttempts: 2,
+      imageryRetryDelayMs: 0,
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      }),
+      loadImageryTile: async () => {
+        attempt += 1;
+
+        if (attempt < 3) {
+          throw new Error(`transient imagery error ${attempt}`);
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        return canvas;
+      },
+      loadElevationTile: async () => createElevationTile(1200)
+    });
+
+    layer.onAdd({
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement,
+      reportError
+    });
+    await layer.ready();
+
+    expect(attempt).toBe(3);
+    expect(reportError).not.toHaveBeenCalled();
+    expect(layer.getActiveTileKeys()).toEqual(["2/2/1"]);
+  });
+
+  it("falls back to solid color imagery after retry exhaustion", async () => {
+    const rendererElement = createRendererElement(1280, 720);
+    const scene = new Scene();
+    const globe = new GlobeMesh({ radius: 1 });
+    const camera = createCamera(2.2);
+    const reportError = vi.fn();
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockImplementation(() => {
+        return {
+          fillStyle: "",
+          fillRect: vi.fn()
+        } as unknown as CanvasRenderingContext2D;
+      });
+    let attempt = 0;
+    const layer = new SurfaceTileLayer("surface-tiles", {
+      minZoom: 1,
+      maxZoom: 6,
+      meshSegments: 2,
+      imageryRetryAttempts: 1,
+      imageryRetryDelayMs: 0,
+      imageryFallbackColor: "#ff00ff",
+      selectTiles: () => ({
+        zoom: 2,
+        coordinates: [{ z: 2, x: 2, y: 1 }]
+      }),
+      loadImageryTile: async () => {
+        attempt += 1;
+        throw new Error(`permanent imagery error ${attempt}`);
+      },
+      loadElevationTile: async () => createElevationTile(1200)
+    });
+
+    layer.onAdd({
+      scene,
+      camera,
+      globe,
+      radius: 1,
+      rendererElement,
+      reportError
+    });
+    try {
+      await layer.ready();
+
+      expect(attempt).toBe(2);
+      expect(layer.getActiveTileKeys()).toEqual(["2/2/1"]);
+      expect(reportError).toHaveBeenCalledTimes(1);
+      expect(reportError).toHaveBeenCalledWith(expect.objectContaining({
+        source: "layer",
+        layerId: "surface-tiles",
+        stage: "imagery",
+        category: "network",
+        severity: "warn",
+        recoverable: true,
+        tileKey: "2/2/1",
+        metadata: expect.objectContaining({
+          attempts: 2,
+          fallbackUsed: true
+        })
+      }));
+    } finally {
+      getContext.mockRestore();
     }
   });
 });

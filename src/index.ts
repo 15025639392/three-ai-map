@@ -1,10 +1,21 @@
 // Core Engine
 export { GlobeEngine } from "./engine/GlobeEngine";
-export type { GlobeEngineOptions, EngineView } from "./engine/EngineOptions";
+export type { GlobeEngineEvents } from "./engine/GlobeEngine";
+export type {
+  GlobeEngineOptions,
+  GlobeEngineRecoveryPolicy,
+  GlobeEngineRecoveryRule,
+  EngineView
+} from "./engine/EngineOptions";
 
 // Layers
 export { Layer } from "./layers/Layer";
 export type {
+  LayerErrorCategory,
+  LayerErrorPayload,
+  LayerRecoveryOverrides,
+  LayerRecoveryQuery,
+  LayerErrorSeverity,
   MarkerDefinition,
   PolylineDefinition,
   PolygonDefinition,
@@ -22,6 +33,23 @@ export type { CoordTransformFn, SurfaceTileLayerOptions } from "./layers/Surface
 
 // Advanced Layers
 export { VectorTileLayer } from "./layers/VectorTileLayer";
+export { ObliquePhotogrammetryLayer } from "./layers/ObliquePhotogrammetryLayer";
+export type {
+  ObliquePhotogrammetryNode,
+  ObliquePhotogrammetryTileset,
+  ObliquePhotogrammetryLayerOptions,
+  ObliquePhotogrammetryDebugStats
+} from "./layers/ObliquePhotogrammetryLayer";
+export {
+  convert3DTilesToObliquePhotogrammetryTileset
+} from "./layers/ObliquePhotogrammetry3DTiles";
+export type {
+  ThreeDTilesBoundingVolume,
+  ThreeDTilesContent,
+  ThreeDTilesNode,
+  ThreeDTilesTileset,
+  ThreeDTilesToObliqueOptions
+} from "./layers/ObliquePhotogrammetry3DTiles";
 export { InstancedMarkerLayer } from "./layers/InstancedMarkerLayer";
 export { ClusterLayer } from "./layers/ClusterLayer";
 export { HeatmapLayer } from "./layers/HeatmapLayer";
@@ -47,6 +75,7 @@ export { AnimationManager } from "./core/Animation";
 export type { Animation, AnimationOptions } from "./core/Animation";
 export { GestureController } from "./core/GestureController";
 export { PerformanceMonitor } from "./core/PerformanceMonitor";
+export type { Metric, PerformanceReport } from "./core/PerformanceMonitor";
 export { PostProcessing } from "./core/PostProcessing";
 
 // Tile Infrastructure

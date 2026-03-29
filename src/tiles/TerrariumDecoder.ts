@@ -10,6 +10,17 @@ interface TerrariumDecodeWorkerResponse {
   buffer: ArrayBuffer;
 }
 
+export interface TerrariumDecoderStats {
+  requestCount: number;
+  workerHitCount: number;
+  fallbackCount: number;
+  workerHitRate: number;
+}
+
+interface TerrariumDecoderOptions {
+  forceMainThread?: boolean;
+}
+
 function decodeTerrariumHeight(red: number, green: number, blue: number): number {
   return red * 256 + green + blue / 256 - 32768;
 }
@@ -26,22 +37,31 @@ export function decodeTerrariumPixels(width: number, height: number, pixels: Uin
 }
 
 export class TerrariumDecoder {
+  private readonly forceMainThread: boolean;
   private worker: Worker | null = null;
   private requestId = 0;
+  private requestCount = 0;
+  private workerHitCount = 0;
+  private fallbackCount = 0;
   private readonly pending = new Map<number, {
     resolve: (value: Float32Array) => void;
     reject: (reason?: unknown) => void;
   }>();
 
-  constructor() {
+  constructor(options: TerrariumDecoderOptions = {}) {
+    this.forceMainThread = options.forceMainThread ?? false;
     this.worker = this.createWorker();
   }
 
   async decode(width: number, height: number, pixels: Uint8ClampedArray): Promise<Float32Array> {
+    this.requestCount += 1;
+
     if (!this.worker) {
+      this.fallbackCount += 1;
       return decodeTerrariumPixels(width, height, pixels);
     }
 
+    this.workerHitCount += 1;
     const id = this.requestId;
     this.requestId += 1;
 
@@ -58,6 +78,18 @@ export class TerrariumDecoder {
     });
   }
 
+  getStats(): TerrariumDecoderStats {
+    const workerHitRate =
+      this.requestCount > 0 ? this.workerHitCount / this.requestCount : 0;
+
+    return {
+      requestCount: this.requestCount,
+      workerHitCount: this.workerHitCount,
+      fallbackCount: this.fallbackCount,
+      workerHitRate
+    };
+  }
+
   dispose(): void {
     for (const pending of this.pending.values()) {
       pending.reject(new Error("Terrarium decoder disposed"));
@@ -69,7 +101,7 @@ export class TerrariumDecoder {
   }
 
   private createWorker(): Worker | null {
-    if (typeof Worker !== "function") {
+    if (this.forceMainThread || typeof Worker !== "function") {
       return null;
     }
 
