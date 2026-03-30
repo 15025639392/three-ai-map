@@ -235,6 +235,7 @@ export class GlobeEngine {
       }
 
       this.terrainHost = layer;
+      this.currentSurfaceTilePlan = null;
       this.applyBaseGlobeTerrainInset();
     }
     this.layerManager.add(layer);
@@ -255,6 +256,7 @@ export class GlobeEngine {
     const existing = this.layerManager.get(layerId);
     if (existing && existing === this.terrainHost) {
       this.terrainHost = null;
+      this.currentSurfaceTilePlan = null;
       this.applyBaseGlobeTerrainInset();
     }
 
