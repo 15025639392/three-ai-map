@@ -53,7 +53,7 @@ interface SurfaceTilePlannerConfig {
   coarseSampling: TileSamplingConfig;
   detailSampling: TileSamplingConfig;
   focusBounds: TileViewportSampleBounds;
-  allowDetailRefine: boolean;
+  allowImmediateFullDetail: boolean;
 }
 
 const DEFAULT_FOCUS_BOUNDS: TileViewportSampleBounds = {
@@ -61,6 +61,12 @@ const DEFAULT_FOCUS_BOUNDS: TileViewportSampleBounds = {
   right: 0.66,
   top: 0.34,
   bottom: 0.66
+};
+const INTERACTION_FOCUS_BOUNDS: TileViewportSampleBounds = {
+  left: 0.42,
+  right: 0.58,
+  top: 0.42,
+  bottom: 0.58
 };
 const PRIORITY_BASELINE = 100_000;
 
@@ -176,8 +182,8 @@ function resolveSurfaceTilePlannerConfig(
   return {
     coarseSampling,
     detailSampling,
-    focusBounds: DEFAULT_FOCUS_BOUNDS,
-    allowDetailRefine: interactionPhase === "idle"
+    focusBounds: interactionPhase === "idle" ? DEFAULT_FOCUS_BOUNDS : INTERACTION_FOCUS_BOUNDS,
+    allowImmediateFullDetail: interactionPhase === "idle"
   };
 }
 
@@ -253,7 +259,6 @@ function selectLeafCoordinates(
   const detailZoom = Math.min(options.maxZoom, targetZoom + 1);
 
   if (
-    !plannerConfig.allowDetailRefine ||
     detailZoom === targetZoom ||
     uniqueCoordinates.length === 0
   ) {
@@ -276,11 +281,14 @@ function selectLeafCoordinates(
 
   const paddedDetailCoordinates = uniqueSortedCoordinates(expandCoordinates(detailCoordinates, 1));
 
-  if (detailZoom === options.maxZoom) {
+  if (plannerConfig.allowImmediateFullDetail && detailZoom === options.maxZoom) {
     return paddedDetailCoordinates;
   }
 
-  if (lowMidZoom || paddedDetailCoordinates.length <= 96) {
+  if (
+    plannerConfig.allowImmediateFullDetail &&
+    (lowMidZoom || paddedDetailCoordinates.length <= 96)
+  ) {
     return paddedDetailCoordinates;
   }
 
@@ -297,7 +305,7 @@ function selectLeafCoordinates(
   }));
 
   if (focusCoordinates.length === 0) {
-    return paddedDetailCoordinates;
+    return plannerConfig.allowImmediateFullDetail ? paddedDetailCoordinates : paddedCoordinates;
   }
 
   const coarseKeySet = new Set(paddedCoordinates.map((coordinate) => tileCoordinateKey(coordinate)));
@@ -315,7 +323,7 @@ function selectLeafCoordinates(
   }
 
   if (refinedParentKeys.size === 0) {
-    return paddedDetailCoordinates;
+    return plannerConfig.allowImmediateFullDetail ? paddedDetailCoordinates : paddedCoordinates;
   }
 
   const mixedCoordinates: TileCoordinate[] = [];
@@ -333,7 +341,10 @@ function selectLeafCoordinates(
 
   const uniqueMixedCoordinates = uniqueSortedCoordinates(mixedCoordinates);
 
-  if (uniqueMixedCoordinates.length >= Math.floor(paddedDetailCoordinates.length * 0.95)) {
+  if (
+    plannerConfig.allowImmediateFullDetail &&
+    uniqueMixedCoordinates.length >= Math.floor(paddedDetailCoordinates.length * 0.95)
+  ) {
     return paddedDetailCoordinates;
   }
 
@@ -355,16 +366,14 @@ export function planSurfaceTileNodes(
   });
   const centerCoordinate = getViewportCenterCoordinate(options, targetZoom);
   const coordinates = selectLeafCoordinates(options, targetZoom, interactionPhase);
-  const highestZoom = coordinates.reduce(
-    (maxZoom, coordinate) => Math.max(maxZoom, coordinate.z),
-    targetZoom
-  );
   const nodes = sortNodesByPriority(coordinates.map((coordinate) => ({
     key: tileCoordinateKey(coordinate),
     coordinate,
     parentKey: coordinate.z === 0 ? null : tileCoordinateKey(getParentCoordinate(coordinate)),
     priority: computeNodePriority(coordinate, centerCoordinate),
-    wantedState: coordinate.z === highestZoom ? "leaf" : "parent",
+    // This planner currently emits the visible frontier only. Parent fallback stays runtime state
+    // on consuming layers and is reachable through parentKey instead of extra parent plan nodes.
+    wantedState: "leaf",
     interactionPhase
   })));
 

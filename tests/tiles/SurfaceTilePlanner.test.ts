@@ -85,6 +85,20 @@ describe("SurfaceTilePlanner", () => {
       .toBeLessThanOrEqual(Math.max(...idlePlan.nodes.map((node) => node.coordinate.z)));
   });
 
+  it("keeps some center refinement during interaction while trimming detail budget", () => {
+    const interactingPlan = planSurfaceTileNodes(createPlannerOptions("interacting"));
+    const idlePlan = planSurfaceTileNodes(createPlannerOptions("idle"));
+    const interactingDetailNodes = interactingPlan.nodes.filter(
+      (node) => node.coordinate.z > interactingPlan.targetZoom
+    );
+    const idleDetailNodes = idlePlan.nodes.filter(
+      (node) => node.coordinate.z > idlePlan.targetZoom
+    );
+
+    expect(interactingDetailNodes.length).toBeGreaterThan(0);
+    expect(interactingDetailNodes.length).toBeLessThan(idleDetailNodes.length);
+  });
+
   it("sorts node priority by distance to the viewport center", () => {
     const plan = planSurfaceTileNodes(createPlannerOptions("idle"));
     const distances = plan.nodes.map((node) => getNodeDistance(node, plan.centerCoordinate));
@@ -112,5 +126,13 @@ describe("SurfaceTilePlanner", () => {
 
       expect(node.parentKey).toBe(tileKey(expectedParent));
     }
+  });
+
+  it("marks planned frontier nodes as leaf state even in mixed lod output", () => {
+    const plan = planSurfaceTileNodes(createPlannerOptions("idle"));
+
+    expect(plan.nodes.some((node) => node.coordinate.z === plan.targetZoom)).toBe(true);
+    expect(plan.nodes.some((node) => node.coordinate.z > plan.targetZoom)).toBe(true);
+    expect(new Set(plan.nodes.map((node) => node.wantedState))).toEqual(new Set(["leaf"]));
   });
 });
