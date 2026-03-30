@@ -20,7 +20,7 @@ import {
 import { shouldRequestDemForCoordinate, type LngLatBounds } from "../tiles/LngLatBounds";
 import { pickTileTemplate } from "../tiles/TileUrlPicker";
 import { Layer, LayerContext, LayerRecoveryOverrides } from "./Layer";
-import type { TerrainTileHost } from "./TerrainTileHost";
+import type { SurfaceTilePlannerConfig, TerrainTileHost } from "./TerrainTileHost";
 import type { TileCoordinate } from "../tiles/TileViewport";
 import type { ElevationEncoding } from "../tiles/ElevationEncoding";
 
@@ -477,6 +477,14 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
   getActiveTileMesh(key: string): Mesh<BufferGeometry, MeshStandardMaterial> | null {
     return this.activeTiles.get(key)?.mesh ?? null;
+  }
+
+  getSurfaceTilePlannerConfig(): SurfaceTilePlannerConfig {
+    return {
+      tileSize: this.tileSize,
+      minZoom: this.minZoom,
+      maxZoom: this.maxZoom
+    };
   }
 
   getDebugStats(): {

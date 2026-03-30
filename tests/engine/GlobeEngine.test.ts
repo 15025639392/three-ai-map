@@ -1,5 +1,6 @@
 import { GlobeEngine } from "../../src/engine/GlobeEngine";
 import { Layer, type LayerContext } from "../../src/layers/Layer";
+import { TerrainTileLayer } from "../../src/layers/TerrainTileLayer";
 import { VectorTileLayer } from "../../src/layers/VectorTileLayer";
 import type { SurfaceTilePlan } from "../../src/tiles/SurfaceTilePlanner";
 
@@ -433,6 +434,12 @@ describe("GlobeEngine", () => {
 
   it("updates the shared tile plan when interaction phase changes", () => {
     vi.useFakeTimers();
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation(() => 1);
+    const cancelAnimationFrameSpy = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => undefined);
 
     const container = document.createElement("div");
     Object.defineProperty(container, "clientWidth", { value: 800 });
@@ -448,7 +455,9 @@ describe("GlobeEngine", () => {
     engine.render();
 
     const initialPlan = probeLayer.getLatestPlan();
-    engine.setView({ lng: 12, lat: 18, altitude: 2.6 });
+    const canvas = container.querySelector("canvas");
+
+    canvas?.dispatchEvent(new WheelEvent("wheel", { clientX: 50, clientY: 50, deltaY: -200 }));
 
     const interactingPlan = probeLayer.getLatestPlan();
 
@@ -462,6 +471,70 @@ describe("GlobeEngine", () => {
     expect(interactingPlan?.nodes.length).toBeLessThan(idlePlan?.nodes.length ?? 0);
 
     engine.destroy();
+    requestAnimationFrameSpy.mockRestore();
+    cancelAnimationFrameSpy.mockRestore();
     vi.useRealTimers();
+  });
+
+  it("keeps the shared tile plan idle for programmatic setView calls", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+    const probeLayer = new SurfaceTilePlanProbeLayer("surface-plan-programmatic-probe");
+
+    engine.addLayer(probeLayer);
+    engine.render();
+    engine.setView({ lng: 12, lat: 18, altitude: 2.6 });
+
+    const plan = probeLayer.getLatestPlan();
+
+    expect(plan?.interactionPhase).toBe("idle");
+
+    engine.destroy();
+  });
+
+  it("aligns shared tile plan bounds with the terrain host capability", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+    const terrainLayer = new TerrainTileLayer("terrain", {
+      terrain: {
+        tiles: ["memory://terrain/{z}/{x}/{y}.png"],
+        encode: "terrarium",
+        tileSize: 512,
+        minZoom: 2,
+        maxZoom: 5
+      },
+      loadElevationTile: async () => ({
+        width: 2,
+        height: 2,
+        data: new Float32Array(4)
+      })
+    });
+    const probeLayer = new SurfaceTilePlanProbeLayer("surface-plan-bounds-probe");
+
+    engine.addLayer(terrainLayer);
+    engine.addLayer(probeLayer);
+    engine.setView({ lng: 0, lat: 0, altitude: 0.12 });
+    engine.render();
+
+    const plan = probeLayer.getLatestPlan();
+    const maxPlannedZoom = Math.max(...(plan?.nodes.map((node) => node.coordinate.z) ?? [0]));
+
+    expect(plan).not.toBeNull();
+    expect(plan?.targetZoom).toBeLessThanOrEqual(5);
+    expect(maxPlannedZoom).toBeLessThanOrEqual(5);
+
+    engine.destroy();
   });
 });

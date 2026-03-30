@@ -85,6 +85,7 @@ export class GlobeEngine {
   private polygonLayer: PolygonLayer | null = null;
   private pendingRenderFrameId: number | null = null;
   private interactionIdleTimeoutId: number | null = null;
+  private suppressInteractionPhaseForProgrammaticView = false;
   private renderCount = 0;
   private errorCount = 0;
   private recoveryPolicyQueryCount = 0;
@@ -181,7 +182,13 @@ export class GlobeEngine {
   }
 
   setView(view: EngineView): void {
-    this.cameraController.setView(view);
+    this.suppressInteractionPhaseForProgrammaticView = true;
+
+    try {
+      this.cameraController.setView(view);
+    } finally {
+      this.suppressInteractionPhaseForProgrammaticView = false;
+    }
   }
 
   getView(): EngineView {
@@ -404,6 +411,13 @@ export class GlobeEngine {
   };
 
   private handleCameraChange = (): void => {
+    if (this.suppressInteractionPhaseForProgrammaticView) {
+      this.surfaceTileInteractionPhase = "idle";
+      this.clearInteractionIdleTimeout();
+      this.render();
+      return;
+    }
+
     this.surfaceTileInteractionPhase = "interacting";
     this.scheduleInteractionIdleReset();
     this.render();
@@ -558,6 +572,7 @@ export class GlobeEngine {
   }
 
   private buildSurfaceTilePlan(): SurfaceTilePlan {
+    const plannerConfig = this.terrainHost?.getSurfaceTilePlannerConfig?.();
     const viewportWidth =
       this.rendererSystem.renderer.domElement.clientWidth ||
       this.rendererSystem.renderer.domElement.width ||
@@ -572,9 +587,9 @@ export class GlobeEngine {
       viewportWidth,
       viewportHeight,
       radius: this.radius,
-      tileSize: SURFACE_TILE_PLAN_TILE_SIZE,
-      minZoom: SURFACE_TILE_PLAN_MIN_ZOOM,
-      maxZoom: SURFACE_TILE_PLAN_MAX_ZOOM,
+      tileSize: plannerConfig?.tileSize ?? SURFACE_TILE_PLAN_TILE_SIZE,
+      minZoom: plannerConfig?.minZoom ?? SURFACE_TILE_PLAN_MIN_ZOOM,
+      maxZoom: plannerConfig?.maxZoom ?? SURFACE_TILE_PLAN_MAX_ZOOM,
       interactionPhase: this.surfaceTileInteractionPhase
     });
   }
