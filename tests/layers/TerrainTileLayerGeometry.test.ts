@@ -152,4 +152,57 @@ describe("TerrainTileLayer shared plan geometry", () => {
     layer.onRemove(context);
     layer.dispose();
   });
+
+  it("keeps the parent tile visible until all selected siblings under that parent are ready", async () => {
+    const parentCoordinate = { z: 1, x: 0, y: 0 };
+    const leftChildCoordinate = { z: 2, x: 0, y: 0 };
+    const rightChildCoordinate = { z: 2, x: 1, y: 0 };
+    const rightChildTile = createDeferred<ElevationTileData>();
+    let currentPlan = createSurfaceTilePlan([parentCoordinate], "idle");
+    const context = createContext(() => currentPlan);
+    const layer = new TerrainTileLayer("terrain", {
+      terrain: {
+        tiles: ["memory://terrain/{z}/{x}/{y}.png"],
+        encode: "terrarium",
+        minZoom: 0,
+        maxZoom: 8
+      },
+      selectTiles: () => ({
+        zoom: currentPlan.targetZoom,
+        coordinates: currentPlan.nodes.map((node) => node.coordinate)
+      }),
+      loadElevationTile: async (coordinate) => {
+        if (coordinate.x === rightChildCoordinate.x && coordinate.y === rightChildCoordinate.y) {
+          return rightChildTile.promise;
+        }
+
+        return createElevationTileData();
+      }
+    });
+
+    layer.onAdd(context);
+    await layer.ready();
+    layer.update(0, context);
+
+    currentPlan = createSurfaceTilePlan([leftChildCoordinate, rightChildCoordinate], "idle");
+    layer.update(0, context);
+    await flushMicrotasks();
+    layer.update(0, context);
+    await flushMicrotasks();
+
+    expect(layer.getActiveTileKeys()).toEqual(["1/0/0"]);
+    expect(layer.getActiveTileMesh("1/0/0")).not.toBeNull();
+    expect(layer.getActiveTileMesh("2/0/0")).toBeNull();
+
+    rightChildTile.resolve(createElevationTileData());
+    await layer.ready();
+    layer.update(0, context);
+    await flushMicrotasks();
+
+    expect(layer.getActiveTileKeys()).toEqual(["2/0/0", "2/1/0"]);
+    expect(layer.getActiveTileMesh("1/0/0")).toBeNull();
+
+    layer.onRemove(context);
+    layer.dispose();
+  });
 });

@@ -100,6 +100,19 @@ function getParentCoordinate(coordinate: TileCoordinate): TileCoordinate {
   };
 }
 
+function getChildCoordinates(coordinate: TileCoordinate): TileCoordinate[] {
+  const childZoom = coordinate.z + 1;
+  const baseX = coordinate.x * 2;
+  const baseY = coordinate.y * 2;
+
+  return [
+    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY },
+    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY },
+    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY + 1 },
+    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY + 1 }
+  ];
+}
+
 function sortCoordinates(coordinates: TileCoordinate[]): TileCoordinate[] {
   return coordinates.sort((left, right) => {
     if (left.z !== right.z) {
@@ -653,10 +666,13 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   }
 
   private resolveDisplayCoordinates(desiredCoordinates: TileCoordinate[]): TileCoordinate[] {
+    const desiredKeys = new Set(
+      desiredCoordinates.map((coordinate) => tileCoordinateKey(coordinate))
+    );
     const displayCoordinates: TileCoordinate[] = [];
 
     for (const coordinate of desiredCoordinates) {
-      const resolved = this.resolveDisplayCoordinate(coordinate);
+      const resolved = this.resolveDisplayCoordinate(coordinate, desiredKeys);
 
       if (!resolved) {
         continue;
@@ -668,14 +684,20 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     return uniqueSortedCoordinates(displayCoordinates);
   }
 
-  private resolveDisplayCoordinate(coordinate: TileCoordinate): TileCoordinate | null {
+  private resolveDisplayCoordinate(
+    coordinate: TileCoordinate,
+    desiredKeys: Set<string>
+  ): TileCoordinate | null {
     let current: TileCoordinate | null = coordinate;
 
     while (current) {
       const key = tileCoordinateKey(current);
       const entry = this.activeTiles.get(key);
 
-      if (entry?.mesh) {
+      if (
+        entry?.mesh &&
+        (current.z < coordinate.z || this.areSelectedSiblingsReady(current, desiredKeys))
+      ) {
         return current;
       }
 
@@ -687,6 +709,26 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     }
 
     return null;
+  }
+
+  private areSelectedSiblingsReady(
+    coordinate: TileCoordinate,
+    desiredKeys: Set<string>
+  ): boolean {
+    if (coordinate.z === 0) {
+      return true;
+    }
+
+    const parent = getParentCoordinate(coordinate);
+    const siblingKeys = getChildCoordinates(parent)
+      .map((childCoordinate) => tileCoordinateKey(childCoordinate))
+      .filter((key) => desiredKeys.has(key));
+
+    if (siblingKeys.length === 0) {
+      return true;
+    }
+
+    return siblingKeys.every((key) => this.activeTiles.get(key)?.mesh);
   }
 
   private updateDisplayStates(
