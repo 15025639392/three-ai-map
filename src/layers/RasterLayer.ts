@@ -15,6 +15,7 @@ import {
   computeVisibleTileCoordinates,
   type TileCoordinate
 } from "../tiles/TileViewport";
+import type { SurfaceTilePlan } from "../tiles/SurfaceTilePlanner";
 import type { TileSource } from "../tiles/tileLoader";
 import { Layer, LayerContext } from "./Layer";
 
@@ -201,6 +202,50 @@ function tileCoordinateKey(coordinate: TileCoordinate): string {
 function normalizeTileX(x: number, zoom: number): number {
   const worldTileCount = 2 ** zoom;
   return ((x % worldTileCount) + worldTileCount) % worldTileCount;
+}
+
+function scaleCoordinateToZoom(coordinate: TileCoordinate, zoom: number): TileCoordinate {
+  if (zoom === coordinate.z) {
+    return coordinate;
+  }
+
+  if (zoom > coordinate.z) {
+    const scale = 2 ** (zoom - coordinate.z);
+
+    return {
+      z: zoom,
+      x: normalizeTileX(coordinate.x * scale, zoom),
+      y: coordinate.y * scale
+    };
+  }
+
+  const scale = 2 ** (coordinate.z - zoom);
+
+  return {
+    z: zoom,
+    x: normalizeTileX(Math.floor(coordinate.x / scale), zoom),
+    y: Math.floor(coordinate.y / scale)
+  };
+}
+
+function isCoordinateWithinHost(
+  coordinate: TileCoordinate,
+  hostCoordinate: TileCoordinate
+): boolean {
+  if (coordinate.z < hostCoordinate.z) {
+    return false;
+  }
+
+  if (coordinate.z === hostCoordinate.z) {
+    return coordinate.x === hostCoordinate.x && coordinate.y === hostCoordinate.y;
+  }
+
+  const scale = 2 ** (coordinate.z - hostCoordinate.z);
+
+  return (
+    Math.floor(coordinate.x / scale) === hostCoordinate.x &&
+    Math.floor(coordinate.y / scale) === hostCoordinate.y
+  );
 }
 
 function getViewportSize(context: LayerContext): { width: number; height: number } {
@@ -435,6 +480,97 @@ function createVisibleDetailRequests(
   return sortRequestsByPriority(requests);
 }
 
+function getRequestSourceCropKey(sourceCrop?: SourceCropRegion): string {
+  if (!sourceCrop) {
+    return "none";
+  }
+
+  return `${sourceCrop.x}:${sourceCrop.y}:${sourceCrop.width}:${sourceCrop.height}`;
+}
+
+function getRasterRequestSignature(request: RasterTileRequest): string {
+  return [
+    request.tileKey,
+    request.destinationX,
+    request.destinationY,
+    request.destinationSize,
+    getRequestSourceCropKey(request.sourceCrop)
+  ].join("|");
+}
+
+function createRequestForCoordinate(
+  hostCoordinate: TileCoordinate,
+  requestCoordinate: TileCoordinate,
+  textureSize: number,
+  centerCoordinate: TileCoordinate,
+  role: RasterTileRequestRole
+): RasterTileRequest | null {
+  if (requestCoordinate.z >= hostCoordinate.z) {
+    const subdivision = 2 ** (requestCoordinate.z - hostCoordinate.z);
+    const tileDrawSize = textureSize / subdivision;
+    const baseX = hostCoordinate.x * subdivision;
+    const baseY = hostCoordinate.y * subdivision;
+    const column = requestCoordinate.x - baseX;
+    const row = requestCoordinate.y - baseY;
+
+    if (column < 0 || column >= subdivision || row < 0 || row >= subdivision) {
+      return null;
+    }
+
+    return {
+      coordinate: requestCoordinate,
+      tileKey: tileCoordinateKey(requestCoordinate),
+      destinationX: column * tileDrawSize,
+      destinationY: row * tileDrawSize,
+      destinationSize: tileDrawSize,
+      priority: computeTilePriority(requestCoordinate, centerCoordinate, role),
+      role
+    };
+  }
+
+  const subdivision = 2 ** (hostCoordinate.z - requestCoordinate.z);
+  const ancestorX = Math.floor(hostCoordinate.x / subdivision);
+  const ancestorY = Math.floor(hostCoordinate.y / subdivision);
+
+  if (ancestorX !== requestCoordinate.x || ancestorY !== requestCoordinate.y) {
+    return null;
+  }
+
+  const column = hostCoordinate.x - ancestorX * subdivision;
+  const row = hostCoordinate.y - ancestorY * subdivision;
+
+  return {
+    coordinate: requestCoordinate,
+    tileKey: tileCoordinateKey(requestCoordinate),
+    destinationX: 0,
+    destinationY: 0,
+    destinationSize: textureSize,
+    priority: computeTilePriority(requestCoordinate, centerCoordinate, role),
+    role,
+    sourceCrop: {
+      x: column / subdivision,
+      y: row / subdivision,
+      width: 1 / subdivision,
+      height: 1 / subdivision
+    }
+  };
+}
+
+function dedupeRasterRequests(requests: RasterTileRequest[]): RasterTileRequest[] {
+  const deduped = new Map<string, RasterTileRequest>();
+
+  for (const request of requests) {
+    const signature = getRasterRequestSignature(request);
+    const existing = deduped.get(signature);
+
+    if (!existing || request.priority > existing.priority) {
+      deduped.set(signature, request);
+    }
+  }
+
+  return [...deduped.values()];
+}
+
 function buildRasterTilePlan(
   hostCoordinate: TileCoordinate,
   imageryZoom: number,
@@ -553,6 +689,89 @@ function createRasterTilePlans(
   });
 }
 
+function createSharedRasterTilePlans(
+  source: RasterTileSource,
+  hostCoordinates: TileCoordinate[],
+  sharedPlan: SurfaceTilePlan
+): RasterTilePlan[] {
+  return hostCoordinates.flatMap((hostCoordinate) => {
+    const matchingSharedCoordinates = sharedPlan.nodes
+      .map((node) => node.coordinate)
+      .filter((coordinate) => isCoordinateWithinHost(coordinate, hostCoordinate));
+
+    if (matchingSharedCoordinates.length === 0) {
+      return [];
+    }
+
+    const fallbackZoom = Math.max(source.minZoom, Math.min(source.maxZoom, hostCoordinate.z));
+    const detailCoordinates = [...new Map(
+      matchingSharedCoordinates.map((coordinate) => {
+        const clampedZoom = Math.max(
+          source.minZoom,
+          Math.min(source.maxZoom, coordinate.z)
+        );
+
+        return [
+          tileCoordinateKey(scaleCoordinateToZoom(coordinate, clampedZoom)),
+          scaleCoordinateToZoom(coordinate, clampedZoom)
+        ] as const;
+      })
+    ).values()];
+    const imageryZoom = Math.max(
+      fallbackZoom,
+      ...detailCoordinates.map((coordinate) => coordinate.z)
+    );
+    const textureSize = resolveTextureSize(hostCoordinate, imageryZoom, source.tileSize);
+    const baseRequests = createCoverageRequests(
+      hostCoordinate,
+      fallbackZoom,
+      textureSize,
+      scaleCoordinateToZoom(sharedPlan.centerCoordinate, fallbackZoom),
+      "fallback"
+    );
+    const baseRequestSignatures = new Set(baseRequests.map((request) => getRasterRequestSignature(request)));
+    const detailRequests = sortRequestsByPriority(
+      dedupeRasterRequests(detailCoordinates.flatMap((coordinate) => {
+        const request = createRequestForCoordinate(
+          hostCoordinate,
+          coordinate,
+          textureSize,
+          scaleCoordinateToZoom(sharedPlan.centerCoordinate, coordinate.z),
+          "detail"
+        );
+
+        if (!request || baseRequestSignatures.has(getRasterRequestSignature(request))) {
+          return [];
+        }
+
+        return [request];
+      }))
+    );
+    const requestKey = [
+      tileCoordinateKey(hostCoordinate),
+      `target:${imageryZoom}`,
+      `fallback:${baseRequests.map((request) => getRasterRequestSignature(request)).join(",")}`,
+      `detail:${detailRequests.map((request) => getRasterRequestSignature(request)).join(",")}`
+    ].join("|");
+
+    return [{
+      hostTileKey: tileCoordinateKey(hostCoordinate),
+      imageryZoom,
+      textureSize,
+      requestKey,
+      baseRequests,
+      detailRequests,
+      requestedImageryTileKeys: [...new Set(
+        [...baseRequests, ...detailRequests].map((request) => request.tileKey)
+      )],
+      requiresCompositing:
+        detailRequests.length > 0 ||
+        baseRequests.length > 1 ||
+        baseRequests.some((request) => request.sourceCrop !== undefined)
+    }];
+  });
+}
+
 function createComposedCanvas(size: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(size));
@@ -656,7 +875,10 @@ export class RasterLayer extends Layer {
 
     const hostKeys = host.getActiveTileKeys();
     const hostCoordinates = hostKeys.map((key) => parseTileKey(key));
-    const desiredPlans = createRasterTilePlans(context, source, hostCoordinates);
+    const sharedPlan = context.getSurfaceTilePlan?.();
+    const desiredPlans = sharedPlan
+      ? createSharedRasterTilePlans(source, hostCoordinates, sharedPlan)
+      : createRasterTilePlans(context, source, hostCoordinates);
     const desiredEntries = new Map(
       desiredPlans.map((plan) => [plan.hostTileKey, plan] as const)
     );

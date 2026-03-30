@@ -20,7 +20,7 @@ import {
 import { shouldRequestDemForCoordinate, type LngLatBounds } from "../tiles/LngLatBounds";
 import { pickTileTemplate } from "../tiles/TileUrlPicker";
 import { Layer, LayerContext, LayerRecoveryOverrides } from "./Layer";
-import type { TerrainTileHost } from "./TerrainTileHost";
+import type { SurfaceTilePlannerConfig, TerrainTileHost } from "./TerrainTileHost";
 import type { TileCoordinate } from "../tiles/TileViewport";
 import type { ElevationEncoding } from "../tiles/ElevationEncoding";
 
@@ -60,6 +60,8 @@ export interface TerrainTileLayerOptions {
   coordTransform?: CoordTransformFn;
 }
 
+type TerrainDisplayState = "parentFallback" | "readyLeaf";
+
 interface TileSkirtMask {
   top: boolean;
   right: boolean;
@@ -68,9 +70,11 @@ interface TileSkirtMask {
 }
 
 interface TerrainTileEntry {
+  coordinate: TileCoordinate;
   promise: Promise<void>;
   mesh: Mesh<BufferGeometry, MeshStandardMaterial> | null;
   skirtMaskKey: string;
+  displayState: TerrainDisplayState;
 }
 
 class StaleTerrainTileError extends Error {
@@ -86,6 +90,51 @@ function tileCoordinateKey(coordinate: TileCoordinate): string {
 function normalizeTileX(x: number, zoom: number): number {
   const worldTileCount = 2 ** zoom;
   return ((x % worldTileCount) + worldTileCount) % worldTileCount;
+}
+
+function getParentCoordinate(coordinate: TileCoordinate): TileCoordinate {
+  return {
+    z: Math.max(0, coordinate.z - 1),
+    x: Math.floor(coordinate.x / 2),
+    y: Math.floor(coordinate.y / 2)
+  };
+}
+
+function getChildCoordinates(coordinate: TileCoordinate): TileCoordinate[] {
+  const childZoom = coordinate.z + 1;
+  const baseX = coordinate.x * 2;
+  const baseY = coordinate.y * 2;
+
+  return [
+    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY },
+    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY },
+    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY + 1 },
+    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY + 1 }
+  ];
+}
+
+function sortCoordinates(coordinates: TileCoordinate[]): TileCoordinate[] {
+  return coordinates.sort((left, right) => {
+    if (left.z !== right.z) {
+      return left.z - right.z;
+    }
+    if (left.y !== right.y) {
+      return left.y - right.y;
+    }
+    return left.x - right.x;
+  });
+}
+
+function uniqueSortedCoordinates(coordinates: TileCoordinate[]): TileCoordinate[] {
+  return sortCoordinates([...new Map(
+    coordinates.map((coordinate) => [tileCoordinateKey(coordinate), coordinate])
+  ).values()]);
+}
+
+function buildSelectionKey(coordinates: TileCoordinate[]): string {
+  return uniqueSortedCoordinates(coordinates)
+    .map((coordinate) => tileCoordinateKey(coordinate))
+    .join("|");
 }
 
 function createDefaultSkirtMask(): TileSkirtMask {
@@ -390,19 +439,18 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private readonly elevationExaggeration: number;
   private readonly zoomExaggerationBoost: number;
   private readonly coordTransform?: CoordTransformFn;
-  private readonly usesDefaultTileSelector: boolean;
   private readonly selectTiles;
   private readonly elevationCache: TileCache<ElevationTileData>;
   private readonly elevationScheduler: TileScheduler<ElevationTileData, TileCoordinate>;
   private readonly terrariumDecoder = new TerrariumDecoder();
   private readonly group = new Group();
   private readonly activeTiles = new Map<string, TerrainTileEntry>();
+  private displayTileKeys = new Set<string>();
   private context: LayerContext | null = null;
   private readyPromise: Promise<void> = Promise.resolve();
   private currentSelectionKey = "";
-  private currentSelectionCount = 0;
+  private currentDisplayKey = "";
   private renderInvalidationQueued = false;
-  private lastSelectionInputsHash = "";
   private readonly elevationRetryAttempts: number;
   private readonly elevationRetryDelayMs: number;
   private cachedElevationRecoveryConfig: { attempts: number; delayMs: number } | null = null;
@@ -419,7 +467,6 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
     this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
     this.coordTransform = options.coordTransform;
-    this.usesDefaultTileSelector = !options.selectTiles;
     this.selectTiles = options.selectTiles ?? selectSurfaceTileCoordinates;
     this.elevationRetryAttempts = 0;
     this.elevationRetryDelayMs = 0;
@@ -458,9 +505,9 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     this.clearActiveTiles();
     this.context = null;
     this.cachedElevationRecoveryConfig = null;
+    this.displayTileKeys.clear();
     this.currentSelectionKey = "";
-    this.currentSelectionCount = 0;
-    this.lastSelectionInputsHash = "";
+    this.currentDisplayKey = "";
   }
 
   update(_deltaTime: number, context: LayerContext): void {
@@ -472,11 +519,23 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   }
 
   getActiveTileKeys(): string[] {
-    return [...this.activeTiles.keys()].sort();
+    return [...this.displayTileKeys].sort();
   }
 
   getActiveTileMesh(key: string): Mesh<BufferGeometry, MeshStandardMaterial> | null {
+    if (!this.displayTileKeys.has(key)) {
+      return null;
+    }
+
     return this.activeTiles.get(key)?.mesh ?? null;
+  }
+
+  getSurfaceTilePlannerConfig(): SurfaceTilePlannerConfig {
+    return {
+      tileSize: this.tileSize,
+      minZoom: this.minZoom,
+      maxZoom: this.maxZoom
+    };
   }
 
   getDebugStats(): {
@@ -486,7 +545,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     terrariumDecode: TerrariumDecoderStats;
   } {
     return {
-      activeTileCount: this.activeTiles.size,
+      activeTileCount: this.displayTileKeys.size,
       activeTileKeys: this.getActiveTileKeys(),
       elevation: this.elevationScheduler.getStats(),
       terrariumDecode: this.terrariumDecoder.getStats()
@@ -501,50 +560,33 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   }
 
   private syncTiles(context: LayerContext): void {
+    const sharedPlan = context.getSurfaceTilePlan?.();
     const viewportWidth =
       context.rendererElement?.clientWidth || context.rendererElement?.width || 1;
     const viewportHeight =
       context.rendererElement?.clientHeight || context.rendererElement?.height || 1;
-
-    if (this.usesDefaultTileSelector) {
-      const selectionInputsHash =
-        `${context.camera.matrixWorld.elements.join(",")}|` +
-        `${context.camera.projectionMatrix.elements.join(",")}|` +
-        `${viewportWidth}|${viewportHeight}|${context.radius}`;
-
-      if (
-        selectionInputsHash === this.lastSelectionInputsHash &&
-        this.activeTiles.size === this.currentSelectionCount
-      ) {
-        return;
+    const selection = sharedPlan
+      ? {
+        zoom: sharedPlan.targetZoom,
+        coordinates: uniqueSortedCoordinates(sharedPlan.nodes.map((node) => node.coordinate))
       }
-
-      this.lastSelectionInputsHash = selectionInputsHash;
-    }
-
-    const selection = this.selectTiles({
-      camera: context.camera,
-      viewportWidth,
-      viewportHeight,
-      radius: context.radius,
-      tileSize: this.tileSize,
-      minZoom: this.minZoom,
-      maxZoom: this.maxZoom
-    });
-
-    const tileSkirtMasks = computeTileSkirtMasks(selection.coordinates);
-    const selectionKey = selection.coordinates
-      .map((coordinate) => tileCoordinateKey(coordinate))
-      .sort()
-      .join("|");
-    const selectionResolved = selection.coordinates.every((coordinate) =>
-      this.activeTiles.get(tileCoordinateKey(coordinate))?.skirtMaskKey ===
-      encodeSkirtMask(tileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask())
-    );
+      : this.selectTiles({
+        camera: context.camera,
+        viewportWidth,
+        viewportHeight,
+        radius: context.radius,
+        tileSize: this.tileSize,
+        minZoom: this.minZoom,
+        maxZoom: this.maxZoom
+      });
+    const desiredCoordinates = uniqueSortedCoordinates(selection.coordinates);
+    const desiredTileSkirtMasks = computeTileSkirtMasks(desiredCoordinates);
+    const selectionKey = buildSelectionKey(desiredCoordinates);
 
     if (!selectionKey) {
       this.currentSelectionKey = "";
-      this.currentSelectionCount = 0;
+      this.currentDisplayKey = "";
+      this.displayTileKeys.clear();
       const removedAny = this.clearActiveTiles();
       this.readyPromise = Promise.resolve();
 
@@ -555,37 +597,151 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       return;
     }
 
-    if (selectionKey === this.currentSelectionKey && selectionResolved) {
+    const preloadPromises = desiredCoordinates.map((coordinate) =>
+      this.ensureTile(
+        coordinate,
+        context.radius,
+        desiredTileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask(),
+        "readyLeaf"
+      )
+    );
+    const displayCoordinates = this.resolveDisplayCoordinates(desiredCoordinates);
+    const displayTileSkirtMasks = computeTileSkirtMasks(displayCoordinates);
+    const displayKey = buildSelectionKey(displayCoordinates);
+    const displayResolved = displayCoordinates.every((coordinate) => {
+      const key = tileCoordinateKey(coordinate);
+      const entry = this.activeTiles.get(key);
+
+      return entry?.mesh !== null && entry?.skirtMaskKey ===
+        encodeSkirtMask(displayTileSkirtMasks.get(key) ?? createDefaultSkirtMask());
+    });
+
+    if (
+      selectionKey === this.currentSelectionKey &&
+      displayKey === this.currentDisplayKey &&
+      displayResolved
+    ) {
       return;
     }
 
     this.currentSelectionKey = selectionKey;
-    this.currentSelectionCount = selection.coordinates.length;
-    const nextKeys = new Set(
-      selection.coordinates.map((coordinate) => tileCoordinateKey(coordinate))
+    this.currentDisplayKey = displayKey;
+    const desiredKeys = new Set(
+      desiredCoordinates.map((coordinate) => tileCoordinateKey(coordinate))
     );
+    const nextDisplayKeys = new Set(
+      displayCoordinates.map((coordinate) => tileCoordinateKey(coordinate))
+    );
+    const keepKeys = new Set<string>([...desiredKeys, ...nextDisplayKeys]);
 
     let removedAny = false;
 
-    for (const key of this.activeTiles.keys()) {
-      if (!nextKeys.has(key)) {
+    for (const key of [...this.activeTiles.keys()]) {
+      if (!keepKeys.has(key)) {
         removedAny = this.removeTile(key) || removedAny;
       }
     }
+
+    this.displayTileKeys = nextDisplayKeys;
+    this.updateDisplayStates(desiredKeys, nextDisplayKeys);
 
     if (removedAny) {
       this.invalidateRender();
     }
 
+    const displayPromises = displayCoordinates.map((coordinate) =>
+      this.ensureTile(
+        coordinate,
+        context.radius,
+        displayTileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask(),
+        desiredKeys.has(tileCoordinateKey(coordinate)) ? "readyLeaf" : "parentFallback"
+      )
+    );
+
     this.readyPromise = Promise.allSettled(
-      selection.coordinates.map((coordinate) =>
-        this.ensureTile(
-          coordinate,
-          context.radius,
-          tileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask()
-        )
+      [...preloadPromises, ...displayPromises].map((promise) =>
+        promise.catch(() => undefined)
       )
     ).then(() => undefined);
+  }
+
+  private resolveDisplayCoordinates(desiredCoordinates: TileCoordinate[]): TileCoordinate[] {
+    const desiredKeys = new Set(
+      desiredCoordinates.map((coordinate) => tileCoordinateKey(coordinate))
+    );
+    const displayCoordinates: TileCoordinate[] = [];
+
+    for (const coordinate of desiredCoordinates) {
+      const resolved = this.resolveDisplayCoordinate(coordinate, desiredKeys);
+
+      if (!resolved) {
+        continue;
+      }
+
+      displayCoordinates.push(resolved);
+    }
+
+    return uniqueSortedCoordinates(displayCoordinates);
+  }
+
+  private resolveDisplayCoordinate(
+    coordinate: TileCoordinate,
+    desiredKeys: Set<string>
+  ): TileCoordinate | null {
+    let current: TileCoordinate | null = coordinate;
+
+    while (current) {
+      const key = tileCoordinateKey(current);
+      const entry = this.activeTiles.get(key);
+
+      if (
+        entry?.mesh &&
+        (current.z < coordinate.z || this.areSelectedSiblingsReady(current, desiredKeys))
+      ) {
+        return current;
+      }
+
+      if (current.z === 0) {
+        return null;
+      }
+
+      current = getParentCoordinate(current);
+    }
+
+    return null;
+  }
+
+  private areSelectedSiblingsReady(
+    coordinate: TileCoordinate,
+    desiredKeys: Set<string>
+  ): boolean {
+    if (coordinate.z === 0) {
+      return true;
+    }
+
+    const parent = getParentCoordinate(coordinate);
+    const siblingKeys = getChildCoordinates(parent)
+      .map((childCoordinate) => tileCoordinateKey(childCoordinate))
+      .filter((key) => desiredKeys.has(key));
+
+    if (siblingKeys.length === 0) {
+      return true;
+    }
+
+    return siblingKeys.every((key) => this.activeTiles.get(key)?.mesh);
+  }
+
+  private updateDisplayStates(
+    desiredKeys: Set<string>,
+    displayKeys: Set<string>
+  ): void {
+    for (const [key, entry] of this.activeTiles) {
+      if (!displayKeys.has(key)) {
+        continue;
+      }
+
+      entry.displayState = desiredKeys.has(key) ? "readyLeaf" : "parentFallback";
+    }
   }
 
   private computeElevationExaggeration(zoom: number): number {
@@ -600,22 +756,28 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private ensureTile(
     coordinate: TileCoordinate,
     radius: number,
-    skirtMask: TileSkirtMask
+    skirtMask: TileSkirtMask,
+    displayState: TerrainDisplayState
   ): Promise<void> {
     const key = tileCoordinateKey(coordinate);
     const existing = this.activeTiles.get(key);
     const skirtMaskKey = encodeSkirtMask(skirtMask);
 
-    if (existing && existing.skirtMaskKey === skirtMaskKey && existing.mesh) {
+    if (existing && existing.skirtMaskKey === skirtMaskKey) {
+      existing.displayState = displayState;
       return existing.promise;
     }
 
     const entry: TerrainTileEntry = existing ?? {
+      coordinate,
       promise: Promise.resolve(),
       mesh: null,
-      skirtMaskKey
+      skirtMaskKey,
+      displayState
     };
+    entry.coordinate = coordinate;
     entry.skirtMaskKey = skirtMaskKey;
+    entry.displayState = displayState;
     this.activeTiles.set(key, entry);
 
     const isCurrent = () => this.activeTiles.get(key) === entry;

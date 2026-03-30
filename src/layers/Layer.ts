@@ -2,6 +2,7 @@ import { PerspectiveCamera, Raycaster, Scene } from "three";
 import { Cartesian3Like, Cartographic } from "../geo/cartographic";
 import { GlobeMesh } from "../globe/GlobeMesh";
 import type { Source } from "../sources/Source";
+import type { SurfaceTilePlan } from "../tiles/SurfaceTilePlanner";
 import type { TerrainTileHost } from "./TerrainTileHost";
 
 export interface LayerErrorPayload {
@@ -56,6 +57,7 @@ export interface LayerContext {
   resolveRecovery?: (query: LayerRecoveryQuery) => LayerRecoveryOverrides | undefined;
   getSource?: (id: string) => Source | undefined;
   getTerrainHost?: () => TerrainTileHost | null;
+  getSurfaceTilePlan?: () => SurfaceTilePlan;
 }
 
 export interface MarkerDefinition {

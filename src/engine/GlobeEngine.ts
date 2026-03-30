@@ -33,6 +33,11 @@ import { EventEmitter } from "../utils/EventEmitter";
 import { Source } from "../sources/Source";
 import { SourceManager } from "../sources/SourceManager";
 import { TerrainTileLayer } from "../layers/TerrainTileLayer";
+import {
+  planSurfaceTileNodes,
+  type SurfaceTileInteractionPhase,
+  type SurfaceTilePlan
+} from "../tiles/SurfaceTilePlanner";
 
 export interface GlobeEngineEvents {
   click: {
@@ -47,6 +52,11 @@ interface RecoveryStageStats {
   hitCount: number;
   ruleHitCount: number;
 }
+
+const SURFACE_TILE_PLAN_TILE_SIZE = 256;
+const SURFACE_TILE_PLAN_MIN_ZOOM = 1;
+const SURFACE_TILE_PLAN_MAX_ZOOM = 18;
+const INTERACTION_IDLE_DELAY_MS = 180;
 
 export class GlobeEngine {
   readonly container: HTMLElement;
@@ -74,6 +84,8 @@ export class GlobeEngine {
   private polylineLayer: PolylineLayer | null = null;
   private polygonLayer: PolygonLayer | null = null;
   private pendingRenderFrameId: number | null = null;
+  private interactionIdleTimeoutId: number | null = null;
+  private suppressInteractionPhaseForProgrammaticView = false;
   private renderCount = 0;
   private errorCount = 0;
   private recoveryPolicyQueryCount = 0;
@@ -81,6 +93,8 @@ export class GlobeEngine {
   private recoveryPolicyRuleHitCount = 0;
   private readonly recoveryPolicyStageStats = new Map<string, RecoveryStageStats>();
   private lastRenderTimestamp: number | null = null;
+  private surfaceTileInteractionPhase: SurfaceTileInteractionPhase = "idle";
+  private currentSurfaceTilePlan: SurfaceTilePlan | null = null;
 
   constructor({
     container,
@@ -142,7 +156,8 @@ export class GlobeEngine {
       reportError: this.handleLayerError,
       resolveRecovery: this.resolveLayerRecovery,
       getSource: (id: string) => this.sourceManager.get(id),
-      getTerrainHost: () => this.terrainHost
+      getTerrainHost: () => this.terrainHost,
+      getSurfaceTilePlan: () => this.getSurfaceTilePlan()
     });
 
     this.cameraController = new CameraController({
@@ -158,6 +173,8 @@ export class GlobeEngine {
 
     this.resize();
     this.setView({ lng: 0, lat: 20, altitude: radius * 2.2 });
+    this.surfaceTileInteractionPhase = "idle";
+    this.clearInteractionIdleTimeout();
     window.addEventListener("resize", this.handleResize);
     this.rendererSystem.renderer.domElement.addEventListener("click", this.handleClick);
     this.rendererSystem.renderer.domElement.addEventListener("contextmenu", this.handleContextMenu);
@@ -165,7 +182,13 @@ export class GlobeEngine {
   }
 
   setView(view: EngineView): void {
-    this.cameraController.setView(view);
+    this.suppressInteractionPhaseForProgrammaticView = true;
+
+    try {
+      this.cameraController.setView(view);
+    } finally {
+      this.suppressInteractionPhaseForProgrammaticView = false;
+    }
   }
 
   getView(): EngineView {
@@ -193,6 +216,7 @@ export class GlobeEngine {
     this.cameraController.update();
     this.interactionAnchorOverlay?.update(this.cameraController.getInteractionDebugState());
     this.sceneSystem.camera.updateMatrixWorld(true);
+    this.currentSurfaceTilePlan = this.buildSurfaceTilePlan();
     this.layerManager.update(0);
     this.rendererSystem.render(this.sceneSystem.scene, this.sceneSystem.camera);
     this.renderCount += 1;
@@ -211,6 +235,7 @@ export class GlobeEngine {
       }
 
       this.terrainHost = layer;
+      this.currentSurfaceTilePlan = null;
       this.applyBaseGlobeTerrainInset();
     }
     this.layerManager.add(layer);
@@ -231,6 +256,7 @@ export class GlobeEngine {
     const existing = this.layerManager.get(layerId);
     if (existing && existing === this.terrainHost) {
       this.terrainHost = null;
+      this.currentSurfaceTilePlan = null;
       this.applyBaseGlobeTerrainInset();
     }
 
@@ -341,6 +367,7 @@ export class GlobeEngine {
     this.rendererSystem.renderer.domElement.removeEventListener("click", this.handleClick);
     this.rendererSystem.renderer.domElement.removeEventListener("contextmenu", this.handleContextMenu);
     this.cancelScheduledRender();
+    this.clearInteractionIdleTimeout();
     this.sourceManager.clear();
     this.layerManager.clear();
     this.terrainHost = null;
@@ -386,6 +413,15 @@ export class GlobeEngine {
   };
 
   private handleCameraChange = (): void => {
+    if (this.suppressInteractionPhaseForProgrammaticView) {
+      this.surfaceTileInteractionPhase = "idle";
+      this.clearInteractionIdleTimeout();
+      this.render();
+      return;
+    }
+
+    this.surfaceTileInteractionPhase = "interacting";
+    this.scheduleInteractionIdleReset();
     this.render();
   };
 
@@ -535,6 +571,61 @@ export class GlobeEngine {
 
     window.cancelAnimationFrame(this.pendingRenderFrameId);
     this.pendingRenderFrameId = null;
+  }
+
+  private buildSurfaceTilePlan(): SurfaceTilePlan {
+    const plannerConfig = this.terrainHost?.getSurfaceTilePlannerConfig?.();
+    const viewportWidth =
+      this.rendererSystem.renderer.domElement.clientWidth ||
+      this.rendererSystem.renderer.domElement.width ||
+      1;
+    const viewportHeight =
+      this.rendererSystem.renderer.domElement.clientHeight ||
+      this.rendererSystem.renderer.domElement.height ||
+      1;
+
+    return planSurfaceTileNodes({
+      camera: this.sceneSystem.camera,
+      viewportWidth,
+      viewportHeight,
+      radius: this.radius,
+      tileSize: plannerConfig?.tileSize ?? SURFACE_TILE_PLAN_TILE_SIZE,
+      minZoom: plannerConfig?.minZoom ?? SURFACE_TILE_PLAN_MIN_ZOOM,
+      maxZoom: plannerConfig?.maxZoom ?? SURFACE_TILE_PLAN_MAX_ZOOM,
+      interactionPhase: this.surfaceTileInteractionPhase
+    });
+  }
+
+  private getSurfaceTilePlan(): SurfaceTilePlan {
+    if (!this.currentSurfaceTilePlan) {
+      this.sceneSystem.camera.updateMatrixWorld(true);
+      this.currentSurfaceTilePlan = this.buildSurfaceTilePlan();
+    }
+
+    return this.currentSurfaceTilePlan;
+  }
+
+  private scheduleInteractionIdleReset(): void {
+    this.clearInteractionIdleTimeout();
+    this.interactionIdleTimeoutId = window.setTimeout(() => {
+      this.interactionIdleTimeoutId = null;
+
+      if (this.surfaceTileInteractionPhase === "idle") {
+        return;
+      }
+
+      this.surfaceTileInteractionPhase = "idle";
+      this.render();
+    }, INTERACTION_IDLE_DELAY_MS);
+  }
+
+  private clearInteractionIdleTimeout(): void {
+    if (this.interactionIdleTimeoutId === null) {
+      return;
+    }
+
+    window.clearTimeout(this.interactionIdleTimeoutId);
+    this.interactionIdleTimeoutId = null;
   }
 
   private applyBaseGlobeTerrainInset(): void {
