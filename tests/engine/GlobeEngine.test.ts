@@ -1,5 +1,7 @@
 import { GlobeEngine } from "../../src/engine/GlobeEngine";
+import { Layer, type LayerContext } from "../../src/layers/Layer";
 import { VectorTileLayer } from "../../src/layers/VectorTileLayer";
+import type { SurfaceTilePlan } from "../../src/tiles/SurfaceTilePlanner";
 
 class FakeRendererSystem {
   readonly renderer = { domElement: document.createElement("canvas") };
@@ -17,6 +19,22 @@ class FakeRendererSystem {
       })
     });
     container.appendChild(this.renderer.domElement);
+  }
+}
+
+class SurfaceTilePlanProbeLayer extends Layer {
+  plans: SurfaceTilePlan[] = [];
+
+  override update(_deltaTime: number, context: LayerContext): void {
+    const plan = context.getSurfaceTilePlan?.();
+
+    if (plan) {
+      this.plans.push(plan);
+    }
+  }
+
+  getLatestPlan(): SurfaceTilePlan | null {
+    return this.plans.at(-1) ?? null;
   }
 }
 
@@ -388,5 +406,62 @@ describe("GlobeEngine", () => {
     expect(report.metrics.get("sceneObjectCount")?.value).toBeGreaterThan(0);
 
     engine.destroy();
+  });
+
+  it("exposes the current shared tile plan through LayerContext", () => {
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+    const probeLayer = new SurfaceTilePlanProbeLayer("surface-plan-probe");
+
+    engine.addLayer(probeLayer);
+    engine.render();
+
+    const plan = probeLayer.getLatestPlan();
+
+    expect(plan).not.toBeNull();
+    expect(plan?.nodes.length).toBeGreaterThan(0);
+    expect(plan?.interactionPhase).toBe("idle");
+
+    engine.destroy();
+  });
+
+  it("updates the shared tile plan when interaction phase changes", () => {
+    vi.useFakeTimers();
+
+    const container = document.createElement("div");
+    Object.defineProperty(container, "clientWidth", { value: 800 });
+    Object.defineProperty(container, "clientHeight", { value: 600 });
+
+    const engine = new GlobeEngine({
+      container,
+      rendererFactory: ({ container: host }) => new FakeRendererSystem(host)
+    });
+    const probeLayer = new SurfaceTilePlanProbeLayer("surface-plan-phase-probe");
+
+    engine.addLayer(probeLayer);
+    engine.render();
+
+    const initialPlan = probeLayer.getLatestPlan();
+    engine.setView({ lng: 12, lat: 18, altitude: 2.6 });
+
+    const interactingPlan = probeLayer.getLatestPlan();
+
+    vi.advanceTimersByTime(300);
+
+    const idlePlan = probeLayer.getLatestPlan();
+
+    expect(initialPlan?.interactionPhase).toBe("idle");
+    expect(interactingPlan?.interactionPhase).toBe("interacting");
+    expect(idlePlan?.interactionPhase).toBe("idle");
+    expect(interactingPlan?.nodes.length).toBeLessThan(idlePlan?.nodes.length ?? 0);
+
+    engine.destroy();
+    vi.useRealTimers();
   });
 });
