@@ -1,10 +1,7 @@
-import { PerspectiveCamera } from "three";
-import {
-  TileCoordinate,
-  TileViewportSampleBounds,
-  computeTargetZoom,
-  computeVisibleTileCoordinates
-} from "./TileViewport";
+import { Frustum, Matrix4, PerspectiveCamera, Sphere, Vector3 } from "three";
+import { cartesianToCartographic, cartographicToCartesian } from "../geo/projection";
+import { clampLatitude, normalizeLongitude } from "../geo/ellipsoid";
+import { TileCoordinate } from "./TileViewport";
 
 export interface SurfaceTileSelectionOptions {
   camera: PerspectiveCamera;
@@ -14,11 +11,6 @@ export interface SurfaceTileSelectionOptions {
   tileSize: number;
   minZoom: number;
   maxZoom: number;
-}
-
-export interface SurfaceTileSelection {
-  zoom: number;
-  coordinates: TileCoordinate[];
 }
 
 export type SurfaceTileInteractionPhase = "interacting" | "idle";
@@ -45,31 +37,45 @@ export interface SurfaceTilePlan {
   nodes: TileNodePlan[];
 }
 
-interface TileSamplingConfig {
-  sampleColumns: number;
-  sampleRows: number;
+interface TileMetrics {
+  center: Vector3;
+  sphereRadius: number;
+  geometricError: number;
 }
 
-interface SurfaceTilePlannerConfig {
-  coarseSampling: TileSamplingConfig;
-  detailSampling: TileSamplingConfig;
-  focusBounds: TileViewportSampleBounds;
-  allowImmediateFullDetail: boolean;
+interface CandidateNode {
+  coordinate: TileCoordinate;
+  sse: number;
+  priority: number;
 }
 
-const DEFAULT_FOCUS_BOUNDS: TileViewportSampleBounds = {
-  left: 0.34,
-  right: 0.66,
-  top: 0.34,
-  bottom: 0.66
-};
-const INTERACTION_FOCUS_BOUNDS: TileViewportSampleBounds = {
-  left: 0.42,
-  right: 0.58,
-  top: 0.42,
-  bottom: 0.58
-};
+interface CenterTileByZoom {
+  x: number;
+  y: number;
+}
+
+interface TileBounds {
+  west: number;
+  east: number;
+  south: number;
+  north: number;
+}
+
 const PRIORITY_BASELINE = 100_000;
+const MIN_DISTANCE_EPSILON = 1e-6;
+const HORIZON_EPSILON = 1e-6;
+const IDLE_SSE_THRESHOLD = 1.0;
+const INTERACTING_SSE_THRESHOLD = 2.2;
+const IDLE_MAX_LEAF_NODES = 1024;
+const INTERACTING_MAX_LEAF_NODES = 320;
+const MAX_SPLIT_STEPS = 8192;
+
+const FRUSTUM = new Frustum();
+const FRUSTUM_MATRIX = new Matrix4();
+const TILE_SPHERE = new Sphere();
+const SAMPLE_SUM = new Vector3();
+const SAMPLE_CARTESIAN = new Vector3();
+const SUBPOINT_CARTESIAN = new Vector3();
 
 export function tileCoordinateKey(coordinate: TileCoordinate): string {
   return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
@@ -94,49 +100,6 @@ export function shortestWrappedTileDistance(x: number, centerX: number, zoom: nu
   return Math.min(directDistance, worldTileCount - directDistance);
 }
 
-function getChildCoordinates(coordinate: TileCoordinate): TileCoordinate[] {
-  const childZoom = coordinate.z + 1;
-  const baseX = coordinate.x * 2;
-  const baseY = coordinate.y * 2;
-
-  return [
-    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY },
-    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY },
-    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY + 1 },
-    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY + 1 }
-  ];
-}
-
-function expandCoordinates(coordinates: TileCoordinate[], padding: number): TileCoordinate[] {
-  if (padding <= 0 || coordinates.length === 0) {
-    return coordinates;
-  }
-
-  const expanded: TileCoordinate[] = [];
-
-  for (const coordinate of coordinates) {
-    const worldTileCount = 2 ** coordinate.z;
-
-    for (let dy = -padding; dy <= padding; dy += 1) {
-      const y = coordinate.y + dy;
-
-      if (y < 0 || y >= worldTileCount) {
-        continue;
-      }
-
-      for (let dx = -padding; dx <= padding; dx += 1) {
-        expanded.push({
-          z: coordinate.z,
-          x: normalizeTileX(coordinate.x + dx, coordinate.z),
-          y
-        });
-      }
-    }
-  }
-
-  return expanded;
-}
-
 function sortCoordinates(coordinates: TileCoordinate[]): TileCoordinate[] {
   return coordinates.sort((left, right) => {
     if (left.z !== right.z) {
@@ -155,229 +118,381 @@ export function uniqueSortedCoordinates(coordinates: TileCoordinate[]): TileCoor
   ).values()]);
 }
 
-function resolveSamplingConfig(targetZoom: number, minZoom: number): {
-  lowMidZoom: boolean;
-  coarseSampling: TileSamplingConfig;
-  detailSampling: TileSamplingConfig;
-} {
-  const lowMidZoom = targetZoom <= minZoom + 1;
-
-  return {
-    lowMidZoom,
-    coarseSampling: lowMidZoom
-      ? { sampleColumns: 12, sampleRows: 10 }
-      : { sampleColumns: 9, sampleRows: 7 },
-    detailSampling: lowMidZoom
-      ? { sampleColumns: 13, sampleRows: 11 }
-      : { sampleColumns: 10, sampleRows: 8 }
-  };
+function mercatorToLatitude(normalizedY: number): number {
+  const mercator = Math.PI * (1 - 2 * normalizedY);
+  return (Math.atan(Math.sinh(mercator)) * 180) / Math.PI;
 }
 
-function resolveSurfaceTilePlannerConfig(
-  interactionPhase: SurfaceTileInteractionPhase,
-  targetZoom: number,
-  minZoom: number
-): SurfaceTilePlannerConfig {
-  const { coarseSampling, detailSampling } = resolveSamplingConfig(targetZoom, minZoom);
+function getTileBounds(coordinate: TileCoordinate): TileBounds {
+  const worldTileCount = 2 ** coordinate.z;
+  const west = (coordinate.x / worldTileCount) * 360 - 180;
+  const east = ((coordinate.x + 1) / worldTileCount) * 360 - 180;
+  const north = mercatorToLatitude(coordinate.y / worldTileCount);
+  const south = mercatorToLatitude((coordinate.y + 1) / worldTileCount);
 
-  return {
-    coarseSampling,
-    detailSampling,
-    focusBounds: interactionPhase === "idle" ? DEFAULT_FOCUS_BOUNDS : INTERACTION_FOCUS_BOUNDS,
-    allowImmediateFullDetail: interactionPhase === "idle"
-  };
+  return { west, east, south, north };
 }
 
-function getViewportCenterCoordinate(
-  options: SurfaceTileSelectionOptions,
-  targetZoom: number
-): TileCoordinate {
-  return computeVisibleTileCoordinates({
-    camera: options.camera,
-    viewportWidth: options.viewportWidth,
-    viewportHeight: options.viewportHeight,
-    radius: options.radius,
-    zoom: targetZoom,
-    sampleColumns: 1,
-    sampleRows: 1,
-    sampleBounds: {
-      left: 0.5,
-      right: 0.5,
-      top: 0.5,
-      bottom: 0.5
-    },
-    paddingTiles: 0
-  })[0];
+function lngToTileX(lng: number, zoom: number): number {
+  return ((normalizeLongitude(lng) + 180) / 360) * 2 ** zoom;
+}
+
+function latToTileY(lat: number, zoom: number): number {
+  const clamped = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const radians = (clamped * Math.PI) / 180;
+  return (
+    (0.5 - Math.log((1 + Math.sin(radians)) / (1 - Math.sin(radians))) / (4 * Math.PI)) * 2 ** zoom
+  );
+}
+
+function toTileCoordinate(lng: number, lat: number, zoom: number): TileCoordinate {
+  const worldTileCount = 2 ** zoom;
+  const x = normalizeTileX(Math.floor(lngToTileX(lng, zoom)), zoom);
+  const y = Math.max(0, Math.min(worldTileCount - 1, Math.floor(latToTileY(lat, zoom))));
+  return { z: zoom, x, y };
+}
+
+function getChildCoordinates(coordinate: TileCoordinate): TileCoordinate[] {
+  const childZoom = coordinate.z + 1;
+  const baseX = coordinate.x * 2;
+  const baseY = coordinate.y * 2;
+
+  return [
+    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY },
+    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY },
+    { z: childZoom, x: normalizeTileX(baseX, childZoom), y: baseY + 1 },
+    { z: childZoom, x: normalizeTileX(baseX + 1, childZoom), y: baseY + 1 }
+  ];
+}
+
+function buildTileMetrics(
+  coordinate: TileCoordinate,
+  radius: number,
+  tileSize: number
+): TileMetrics {
+  const bounds = getTileBounds(coordinate);
+  const points: Vector3[] = [];
+
+  for (const latT of [0, 0.5, 1]) {
+    const lat = bounds.south + (bounds.north - bounds.south) * latT;
+
+    for (const lngT of [0, 0.5, 1]) {
+      const lng = bounds.west + (bounds.east - bounds.west) * lngT;
+      const cartesian = cartographicToCartesian({ lng, lat, height: 0 }, radius);
+      points.push(new Vector3(cartesian.x, cartesian.y, cartesian.z));
+    }
+  }
+
+  SAMPLE_SUM.set(0, 0, 0);
+  for (const point of points) {
+    SAMPLE_SUM.add(point);
+  }
+
+  if (SAMPLE_SUM.lengthSq() <= MIN_DISTANCE_EPSILON) {
+    SAMPLE_CARTESIAN.copy(points[0]);
+  } else {
+    SAMPLE_CARTESIAN.copy(SAMPLE_SUM).normalize().multiplyScalar(radius);
+  }
+
+  let sphereRadius = 0;
+
+  for (const point of points) {
+    sphereRadius = Math.max(sphereRadius, point.distanceTo(SAMPLE_CARTESIAN));
+  }
+
+  const geometricError = (sphereRadius * 2) / Math.max(1, tileSize);
+
+  return {
+    center: SAMPLE_CARTESIAN.clone(),
+    sphereRadius,
+    geometricError
+  };
 }
 
 function computeNodePriority(
   coordinate: TileCoordinate,
-  centerCoordinate: TileCoordinate
+  centerByZoom: ReadonlyMap<number, CenterTileByZoom>
 ): number {
-  const zoomDelta = coordinate.z - centerCoordinate.z;
-  const zoomScale = zoomDelta >= 0 ? 2 ** zoomDelta : 1 / (2 ** Math.abs(zoomDelta));
-  const centerX = centerCoordinate.x * zoomScale;
-  const centerY = centerCoordinate.y * zoomScale;
-  const dx = shortestWrappedTileDistance(coordinate.x, centerX, coordinate.z);
-  const dy = Math.abs(coordinate.y - centerY);
-  const distancePenalty = dx * dx + dy * dy;
+  const center = centerByZoom.get(coordinate.z);
 
+  if (!center) {
+    return PRIORITY_BASELINE;
+  }
+
+  const dx = shortestWrappedTileDistance(coordinate.x, center.x, coordinate.z);
+  const dy = Math.abs(coordinate.y - center.y);
+  const distancePenalty = dx * dx + dy * dy;
   return PRIORITY_BASELINE - distancePenalty;
 }
 
-function sortNodesByPriority(nodes: TileNodePlan[]): TileNodePlan[] {
-  return [...nodes].sort((left, right) => {
-    if (left.priority !== right.priority) {
-      return right.priority - left.priority;
-    }
-
-    return left.key.localeCompare(right.key);
-  });
+function getSseThreshold(interactionPhase: SurfaceTileInteractionPhase): number {
+  return interactionPhase === "idle" ? IDLE_SSE_THRESHOLD : INTERACTING_SSE_THRESHOLD;
 }
 
-function selectLeafCoordinates(
-  options: SurfaceTileSelectionOptions,
-  targetZoom: number,
-  interactionPhase: SurfaceTileInteractionPhase
-): TileCoordinate[] {
-  const plannerConfig = resolveSurfaceTilePlannerConfig(
-    interactionPhase,
-    targetZoom,
+function getLeafBudget(interactionPhase: SurfaceTileInteractionPhase): number {
+  return interactionPhase === "idle" ? IDLE_MAX_LEAF_NODES : INTERACTING_MAX_LEAF_NODES;
+}
+
+function evaluateNode(
+  coordinate: TileCoordinate,
+  radius: number,
+  tileSize: number,
+  cameraPosition: Vector3,
+  cameraDistance: number,
+  projectionScale: number,
+  tileMetricsCache: Map<string, TileMetrics>
+): { visible: boolean; sse: number } {
+  const key = tileCoordinateKey(coordinate);
+  let metrics = tileMetricsCache.get(key);
+
+  if (!metrics) {
+    metrics = buildTileMetrics(coordinate, radius, tileSize);
+    tileMetricsCache.set(key, metrics);
+  }
+
+  TILE_SPHERE.center.copy(metrics.center);
+  TILE_SPHERE.radius = metrics.sphereRadius;
+
+  if (!FRUSTUM.intersectsSphere(TILE_SPHERE)) {
+    return { visible: false, sse: 0 };
+  }
+
+  const horizonTest = cameraPosition.dot(metrics.center) + cameraDistance * metrics.sphereRadius;
+
+  if (horizonTest < radius * radius - HORIZON_EPSILON) {
+    return { visible: false, sse: 0 };
+  }
+
+  const distanceToSurface = Math.max(
+    MIN_DISTANCE_EPSILON,
+    cameraPosition.distanceTo(metrics.center) - metrics.sphereRadius
+  );
+  const sse = (metrics.geometricError * projectionScale) / distanceToSurface;
+
+  return {
+    visible: true,
+    sse
+  };
+}
+
+function buildCenterTileByZoom(
+  cameraPosition: Vector3,
+  radius: number,
+  minZoom: number,
+  maxZoom: number
+): Map<number, CenterTileByZoom> {
+  SUBPOINT_CARTESIAN.copy(cameraPosition).normalize().multiplyScalar(radius);
+  const subpoint = cartesianToCartographic(
+    {
+      x: SUBPOINT_CARTESIAN.x,
+      y: SUBPOINT_CARTESIAN.y,
+      z: SUBPOINT_CARTESIAN.z
+    },
+    radius
+  );
+  const byZoom = new Map<number, CenterTileByZoom>();
+
+  for (let zoom = minZoom; zoom <= maxZoom; zoom += 1) {
+    const coordinate = toTileCoordinate(subpoint.lng, clampLatitude(subpoint.lat), zoom);
+    byZoom.set(zoom, { x: coordinate.x, y: coordinate.y });
+  }
+
+  return byZoom;
+}
+
+function selectLeafCoordinates(options: SurfaceTileSelectionOptions, interactionPhase: SurfaceTileInteractionPhase): TileCoordinate[] {
+  FRUSTUM_MATRIX.multiplyMatrices(options.camera.projectionMatrix, options.camera.matrixWorldInverse);
+  FRUSTUM.setFromProjectionMatrix(FRUSTUM_MATRIX);
+
+  const cameraPosition = options.camera.position.clone();
+  const cameraDistance = Math.max(MIN_DISTANCE_EPSILON, cameraPosition.length());
+  const projectionScale = options.viewportHeight / (2 * Math.tan((options.camera.fov * Math.PI) / 360));
+  const sseThreshold = getSseThreshold(interactionPhase);
+  const leafBudget = getLeafBudget(interactionPhase);
+  const tileMetricsCache = new Map<string, TileMetrics>();
+  const centerByZoom = buildCenterTileByZoom(
+    cameraPosition,
+    options.radius,
+    options.minZoom,
+    options.maxZoom
+  );
+  const leaves = new Map<string, TileCoordinate>();
+  const candidates: CandidateNode[] = [];
+
+  const minWorldTileCount = 2 ** options.minZoom;
+
+  for (let y = 0; y < minWorldTileCount; y += 1) {
+    for (let x = 0; x < minWorldTileCount; x += 1) {
+      const coordinate = { z: options.minZoom, x, y };
+      const evaluation = evaluateNode(
+        coordinate,
+        options.radius,
+        options.tileSize,
+        cameraPosition,
+        cameraDistance,
+        projectionScale,
+        tileMetricsCache
+      );
+
+      if (!evaluation.visible) {
+        continue;
+      }
+
+      const key = tileCoordinateKey(coordinate);
+      leaves.set(key, coordinate);
+
+      if (coordinate.z < options.maxZoom && evaluation.sse > sseThreshold) {
+        candidates.push({
+          coordinate,
+          sse: evaluation.sse,
+          priority: computeNodePriority(coordinate, centerByZoom)
+        });
+      }
+    }
+  }
+
+  if (leaves.size === 0) {
+    const fallbackCenter = centerByZoom.get(options.minZoom) ?? { x: 0, y: 0 };
+    const fallbackCoordinate = {
+      z: options.minZoom,
+      x: normalizeTileX(fallbackCenter.x, options.minZoom),
+      y: Math.max(0, Math.min(minWorldTileCount - 1, fallbackCenter.y))
+    };
+    leaves.set(tileCoordinateKey(fallbackCoordinate), fallbackCoordinate);
+  }
+
+  let splitSteps = 0;
+
+  while (candidates.length > 0 && splitSteps < MAX_SPLIT_STEPS) {
+    candidates.sort((left, right) => {
+      if (left.sse !== right.sse) {
+        return right.sse - left.sse;
+      }
+
+      if (left.priority !== right.priority) {
+        return right.priority - left.priority;
+      }
+
+      return tileCoordinateKey(left.coordinate).localeCompare(tileCoordinateKey(right.coordinate));
+    });
+
+    const candidate = candidates.shift();
+
+    if (!candidate) {
+      break;
+    }
+
+    const parent = candidate.coordinate;
+
+    if (parent.z >= options.maxZoom) {
+      continue;
+    }
+
+    const parentKey = tileCoordinateKey(parent);
+
+    if (!leaves.has(parentKey)) {
+      continue;
+    }
+
+    if (leaves.size + 3 > leafBudget) {
+      continue;
+    }
+
+    const parentEvaluation = evaluateNode(
+      parent,
+      options.radius,
+      options.tileSize,
+      cameraPosition,
+      cameraDistance,
+      projectionScale,
+      tileMetricsCache
+    );
+
+    if (!parentEvaluation.visible || parentEvaluation.sse <= sseThreshold) {
+      continue;
+    }
+
+    const visibleChildren: Array<{ coordinate: TileCoordinate; sse: number }> = [];
+
+    for (const child of getChildCoordinates(parent)) {
+      const evaluation = evaluateNode(
+        child,
+        options.radius,
+        options.tileSize,
+        cameraPosition,
+        cameraDistance,
+        projectionScale,
+        tileMetricsCache
+      );
+
+      if (!evaluation.visible) {
+        continue;
+      }
+
+      visibleChildren.push({ coordinate: child, sse: evaluation.sse });
+    }
+
+    if (visibleChildren.length === 0) {
+      continue;
+    }
+
+    leaves.delete(parentKey);
+
+    for (const child of visibleChildren) {
+      const childKey = tileCoordinateKey(child.coordinate);
+      leaves.set(childKey, child.coordinate);
+
+      if (child.coordinate.z < options.maxZoom && child.sse > sseThreshold) {
+        candidates.push({
+          coordinate: child.coordinate,
+          sse: child.sse,
+          priority: computeNodePriority(child.coordinate, centerByZoom)
+        });
+      }
+    }
+
+    splitSteps += 1;
+  }
+
+  return uniqueSortedCoordinates([...leaves.values()]);
+}
+
+export function planSurfaceTileNodes(options: SurfaceTilePlannerOptions): SurfaceTilePlan {
+  const interactionPhase = options.interactionPhase ?? "idle";
+  const coordinates = selectLeafCoordinates(options, interactionPhase);
+  const targetZoom = coordinates.reduce(
+    (maxZoom, coordinate) => Math.max(maxZoom, coordinate.z),
     options.minZoom
   );
-  const { lowMidZoom } = resolveSamplingConfig(targetZoom, options.minZoom);
-  const coordinates = computeVisibleTileCoordinates({
-    camera: options.camera,
-    viewportWidth: options.viewportWidth,
-    viewportHeight: options.viewportHeight,
-    radius: options.radius,
-    zoom: targetZoom,
-    sampleColumns: plannerConfig.coarseSampling.sampleColumns,
-    sampleRows: plannerConfig.coarseSampling.sampleRows
-  });
-  const uniqueCoordinates = uniqueSortedCoordinates(coordinates);
-  const paddedCoordinates = uniqueSortedCoordinates(expandCoordinates(uniqueCoordinates, 1));
-  const detailZoom = Math.min(options.maxZoom, targetZoom + 1);
+  const centerByZoom = buildCenterTileByZoom(
+    options.camera.position,
+    options.radius,
+    options.minZoom,
+    Math.max(options.maxZoom, targetZoom)
+  );
+  const center = centerByZoom.get(targetZoom) ?? centerByZoom.get(options.minZoom) ?? { x: 0, y: 0 };
+  const centerCoordinate: TileCoordinate = {
+    z: targetZoom,
+    x: normalizeTileX(center.x, targetZoom),
+    y: Math.max(0, Math.min(2 ** targetZoom - 1, center.y))
+  };
+  const nodes = [...coordinates]
+    .map((coordinate) => ({
+      key: tileCoordinateKey(coordinate),
+      coordinate,
+      parentKey: coordinate.z === 0 ? null : tileCoordinateKey(getParentCoordinate(coordinate)),
+      priority: computeNodePriority(coordinate, centerByZoom),
+      wantedState: "leaf" as const,
+      interactionPhase,
+      morphFactor: 1
+    }))
+    .sort((left, right) => {
+      if (left.priority !== right.priority) {
+        return right.priority - left.priority;
+      }
 
-  if (
-    detailZoom === targetZoom ||
-    uniqueCoordinates.length === 0
-  ) {
-    return paddedCoordinates;
-  }
-
-  const detailCoordinates = uniqueSortedCoordinates(computeVisibleTileCoordinates({
-    camera: options.camera,
-    viewportWidth: options.viewportWidth,
-    viewportHeight: options.viewportHeight,
-    radius: options.radius,
-    zoom: detailZoom,
-    sampleColumns: plannerConfig.detailSampling.sampleColumns,
-    sampleRows: plannerConfig.detailSampling.sampleRows
-  }));
-
-  if (detailCoordinates.length === 0) {
-    return paddedCoordinates;
-  }
-
-  const paddedDetailCoordinates = uniqueSortedCoordinates(expandCoordinates(detailCoordinates, 1));
-
-  if (plannerConfig.allowImmediateFullDetail && detailZoom === options.maxZoom) {
-    return paddedDetailCoordinates;
-  }
-
-  if (
-    plannerConfig.allowImmediateFullDetail &&
-    (lowMidZoom || paddedDetailCoordinates.length <= 96)
-  ) {
-    return paddedDetailCoordinates;
-  }
-
-  const focusCoordinates = uniqueSortedCoordinates(computeVisibleTileCoordinates({
-    camera: options.camera,
-    viewportWidth: options.viewportWidth,
-    viewportHeight: options.viewportHeight,
-    radius: options.radius,
-    zoom: detailZoom,
-    sampleColumns: plannerConfig.detailSampling.sampleColumns,
-    sampleRows: plannerConfig.detailSampling.sampleRows,
-    sampleBounds: plannerConfig.focusBounds,
-    paddingTiles: 0
-  }));
-
-  if (focusCoordinates.length === 0) {
-    return plannerConfig.allowImmediateFullDetail ? paddedDetailCoordinates : paddedCoordinates;
-  }
-
-  const coarseKeySet = new Set(paddedCoordinates.map((coordinate) => tileCoordinateKey(coordinate)));
-  const refinedParentKeys = new Set<string>();
-
-  for (const coordinate of focusCoordinates) {
-    const parent = getParentCoordinate(coordinate);
-    const key = tileCoordinateKey(parent);
-
-    if (!coarseKeySet.has(key)) {
-      continue;
-    }
-
-    refinedParentKeys.add(key);
-  }
-
-  if (refinedParentKeys.size === 0) {
-    return plannerConfig.allowImmediateFullDetail ? paddedDetailCoordinates : paddedCoordinates;
-  }
-
-  const mixedCoordinates: TileCoordinate[] = [];
-
-  for (const coordinate of paddedCoordinates) {
-    const key = tileCoordinateKey(coordinate);
-
-    if (!refinedParentKeys.has(key)) {
-      mixedCoordinates.push(coordinate);
-      continue;
-    }
-
-    mixedCoordinates.push(...getChildCoordinates(coordinate));
-  }
-
-  const uniqueMixedCoordinates = uniqueSortedCoordinates(mixedCoordinates);
-
-  if (
-    plannerConfig.allowImmediateFullDetail &&
-    uniqueMixedCoordinates.length >= Math.floor(paddedDetailCoordinates.length * 0.95)
-  ) {
-    return paddedDetailCoordinates;
-  }
-
-  return uniqueMixedCoordinates;
-}
-
-export function planSurfaceTileNodes(
-  options: SurfaceTilePlannerOptions
-): SurfaceTilePlan {
-  const interactionPhase = options.interactionPhase ?? "idle";
-  const targetZoom = computeTargetZoom({
-    camera: options.camera,
-    viewportWidth: options.viewportWidth,
-    viewportHeight: options.viewportHeight,
-    radius: options.radius,
-    tileSize: options.tileSize,
-    minZoom: options.minZoom,
-    maxZoom: options.maxZoom
-  });
-  const centerCoordinate = getViewportCenterCoordinate(options, targetZoom);
-  const coordinates = selectLeafCoordinates(options, targetZoom, interactionPhase);
-  const nodes = sortNodesByPriority(coordinates.map((coordinate) => ({
-    key: tileCoordinateKey(coordinate),
-    coordinate,
-    parentKey: coordinate.z === 0 ? null : tileCoordinateKey(getParentCoordinate(coordinate)),
-    priority: computeNodePriority(coordinate, centerCoordinate),
-    // This planner currently emits the visible frontier only. Parent fallback stays runtime state
-    // on consuming layers and is reachable through parentKey instead of extra parent plan nodes.
-    wantedState: "leaf",
-    interactionPhase,
-    morphFactor: 1
-  })));
+      return left.key.localeCompare(right.key);
+    });
 
   return {
     targetZoom,

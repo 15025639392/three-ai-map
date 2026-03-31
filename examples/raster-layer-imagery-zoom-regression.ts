@@ -71,10 +71,6 @@ export function runRasterLayerImageryZoomRegression(
     meshSegments: 8,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
-    selectTiles: () => ({
-      zoom: HOST_TILE.z,
-      coordinates: [HOST_TILE]
-    }),
     loadElevationTile: async () => createFlatElevationTile()
   });
   const rasterSource = new RasterTileSource("raster", {

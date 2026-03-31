@@ -2,17 +2,21 @@ import {
   BufferGeometry,
   ClampToEdgeWrapping,
   CanvasTexture,
+  Float32BufferAttribute,
   Group,
   LinearFilter,
   Mesh,
   MeshStandardMaterial,
-  Texture
+  Texture,
+  Vector3
 } from "three";
+import { cartographicToCartesian } from "../geo/projection";
 import { RasterTileSource } from "../sources/RasterTileSource";
 import { TileRequestCancelledError } from "../tiles/TileScheduler";
 import { type TileCoordinate } from "../tiles/TileViewport";
 import type { SurfaceTilePlan } from "../tiles/SurfaceTilePlanner";
 import type { TileSource } from "../tiles/tileLoader";
+import { getSurfaceTileBounds } from "../tiles/SurfaceTileTree";
 import { Layer, LayerContext } from "./Layer";
 
 export interface RasterLayerOptions {
@@ -195,9 +199,139 @@ const FALLBACK_PRIORITY_BOOST = 1_000_000;
 const PRIORITY_BASELINE = 100_000;
 const RASTER_CROSSFADE_DURATION_MS = 220;
 const RASTER_CROSSFADE_EPSILON = 1e-4;
+const POLAR_CAP_SEGMENTS = 10;
+
+const CAP_P0 = new Vector3();
+const CAP_P1 = new Vector3();
+const CAP_P2 = new Vector3();
+const CAP_N = new Vector3();
+const CAP_C = new Vector3();
 
 function tileCoordinateKey(coordinate: TileCoordinate): string {
   return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
+}
+
+interface UvBounds {
+  minU: number;
+  maxU: number;
+  minV: number;
+  maxV: number;
+}
+
+type PolarHemisphere = "north" | "south";
+
+function resolveUvBounds(geometry: BufferGeometry): UvBounds {
+  const uvAttribute = geometry.getAttribute("uv");
+
+  if (!uvAttribute || uvAttribute.itemSize < 2) {
+    return { minU: 0, maxU: 1, minV: 0, maxV: 1 };
+  }
+
+  let minU = Number.POSITIVE_INFINITY;
+  let maxU = Number.NEGATIVE_INFINITY;
+  let minV = Number.POSITIVE_INFINITY;
+  let maxV = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < uvAttribute.count; index += 1) {
+    const u = uvAttribute.getX(index);
+    const v = uvAttribute.getY(index);
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+    minV = Math.min(minV, v);
+    maxV = Math.max(maxV, v);
+  }
+
+  if (!Number.isFinite(minU) || !Number.isFinite(maxU) || !Number.isFinite(minV) || !Number.isFinite(maxV)) {
+    return { minU: 0, maxU: 1, minV: 0, maxV: 1 };
+  }
+
+  return { minU, maxU, minV, maxV };
+}
+
+function getPolarHemisphere(coordinate: TileCoordinate): PolarHemisphere | null {
+  const worldTileCount = 2 ** coordinate.z;
+
+  if (coordinate.y === 0) {
+    return "north";
+  }
+
+  if (coordinate.y === worldTileCount - 1) {
+    return "south";
+  }
+
+  return null;
+}
+
+function appendOrientedTriangle(
+  indices: number[],
+  positions: number[],
+  i0: number,
+  i1: number,
+  i2: number
+): void {
+  const o0 = i0 * 3;
+  const o1 = i1 * 3;
+  const o2 = i2 * 3;
+  CAP_P0.set(positions[o0], positions[o0 + 1], positions[o0 + 2]);
+  CAP_P1.set(positions[o1], positions[o1 + 1], positions[o1 + 2]);
+  CAP_P2.set(positions[o2], positions[o2 + 1], positions[o2 + 2]);
+  CAP_N.copy(CAP_P1).sub(CAP_P0).cross(CAP_C.copy(CAP_P2).sub(CAP_P0));
+  CAP_C.copy(CAP_P0).add(CAP_P1).add(CAP_P2).multiplyScalar(1 / 3);
+
+  if (CAP_N.dot(CAP_C) < 0) {
+    indices.push(i0, i2, i1);
+    return;
+  }
+
+  indices.push(i0, i1, i2);
+}
+
+function buildPolarCapGeometry(
+  coordinate: TileCoordinate,
+  radius: number,
+  uvBounds: UvBounds
+): BufferGeometry | null {
+  const hemisphere = getPolarHemisphere(coordinate);
+
+  if (!hemisphere) {
+    return null;
+  }
+
+  const bounds = getSurfaceTileBounds(coordinate);
+  const edgeLat = hemisphere === "north" ? bounds.north : bounds.south;
+  const poleLat = hemisphere === "north" ? 90 : -90;
+  const edgeV = hemisphere === "north" ? uvBounds.maxV : uvBounds.minV;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let segment = 0; segment <= POLAR_CAP_SEGMENTS; segment += 1) {
+    const t = segment / POLAR_CAP_SEGMENTS;
+    const lng = bounds.west + (bounds.east - bounds.west) * t;
+    const edge = cartographicToCartesian({ lng, lat: edgeLat, height: 0 }, radius);
+    positions.push(edge.x, edge.y, edge.z);
+    uvs.push(uvBounds.minU + (uvBounds.maxU - uvBounds.minU) * t, edgeV);
+  }
+
+  const pole = cartographicToCartesian(
+    { lng: (bounds.west + bounds.east) * 0.5, lat: poleLat, height: 0 },
+    radius
+  );
+  const poleIndex = positions.length / 3;
+  positions.push(pole.x, pole.y, pole.z);
+  uvs.push((uvBounds.minU + uvBounds.maxU) * 0.5, edgeV);
+
+  for (let segment = 0; segment < POLAR_CAP_SEGMENTS; segment += 1) {
+    appendOrientedTriangle(indices, positions, segment, segment + 1, poleIndex);
+  }
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
 }
 
 function normalizeTileX(x: number, zoom: number): number {
@@ -907,7 +1041,7 @@ export class RasterLayer extends Layer {
     }
 
     if (plan.requiresCompositing) {
-      const surface = this.createCompositedMesh(hostMesh, plan, baseTiles);
+      const surface = this.createCompositedMesh(hostMesh, plan, baseTiles, context.radius);
 
       if (!isCurrent()) {
         this.disposeRasterMesh(surface.mesh);
@@ -920,7 +1054,7 @@ export class RasterLayer extends Layer {
       return;
     }
 
-    const mesh = this.createDirectMesh(hostMesh, plan, baseTiles[0].source);
+    const mesh = this.createDirectMesh(hostMesh, plan, baseTiles[0].source, context.radius);
 
     if (!isCurrent()) {
       this.disposeRasterMesh(mesh);
@@ -934,7 +1068,8 @@ export class RasterLayer extends Layer {
   private createDirectMesh(
     hostMesh: Mesh<BufferGeometry, MeshStandardMaterial>,
     plan: RasterTilePlan,
-    source: TileSource
+    source: TileSource,
+    radius: number
   ): Mesh<BufferGeometry, MeshStandardMaterial> {
     const texture = createTexture(source);
     const material = this.createMaterial(texture);
@@ -942,13 +1077,15 @@ export class RasterLayer extends Layer {
     mesh.name = `${this.id}:${plan.hostTileKey}:z${plan.imageryZoom}`;
     const zBucket = Math.max(0, this.zIndex ?? this.addOrder);
     mesh.renderOrder = RASTER_BASE + zBucket * ZINDEX_STRIDE + this.addOrder;
+    this.attachPolarCapMesh(mesh, parseTileKey(plan.hostTileKey), radius);
     return mesh;
   }
 
   private createCompositedMesh(
     hostMesh: Mesh<BufferGeometry, MeshStandardMaterial>,
     plan: RasterTilePlan,
-    tiles: LoadedRasterTile[]
+    tiles: LoadedRasterTile[],
+    radius: number
   ): {
     mesh: Mesh<BufferGeometry, MeshStandardMaterial>;
     canvas: HTMLCanvasElement;
@@ -974,6 +1111,7 @@ export class RasterLayer extends Layer {
     mesh.name = `${this.id}:${plan.hostTileKey}:z${plan.imageryZoom}`;
     const zBucket = Math.max(0, this.zIndex ?? this.addOrder);
     mesh.renderOrder = RASTER_BASE + zBucket * ZINDEX_STRIDE + this.addOrder;
+    this.attachPolarCapMesh(mesh, parseTileKey(plan.hostTileKey), radius);
 
     return {
       mesh,
@@ -1250,8 +1388,30 @@ export class RasterLayer extends Layer {
   }
 
   private disposeRasterMesh(mesh: Mesh<BufferGeometry, MeshStandardMaterial>): void {
+    for (const child of mesh.children) {
+      if (child instanceof Mesh) {
+        child.geometry.dispose();
+      }
+    }
     mesh.material.map?.dispose();
     mesh.material.dispose();
     mesh.geometry.dispose();
+  }
+
+  private attachPolarCapMesh(
+    mesh: Mesh<BufferGeometry, MeshStandardMaterial>,
+    coordinate: TileCoordinate,
+    radius: number
+  ): void {
+    const capGeometry = buildPolarCapGeometry(coordinate, radius, resolveUvBounds(mesh.geometry));
+
+    if (!capGeometry) {
+      return;
+    }
+
+    const capMesh = new Mesh(capGeometry, mesh.material);
+    capMesh.name = `${mesh.name}:polar-cap`;
+    capMesh.renderOrder = mesh.renderOrder;
+    mesh.add(capMesh);
   }
 }

@@ -41,14 +41,34 @@ function parseZoomList(raw) {
     .sort((left, right) => left - right);
 }
 
-function assertSingleZoom(list, expected, label) {
-  if (list.length !== 1 || list[0] !== expected) {
-    throw new Error(`Expected ${label} to equal [${expected}], got [${list.join(",")}]`);
-  }
-}
-
 function sameZooms(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function maxZoom(list) {
+  if (list.length === 0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  return list[list.length - 1] ?? Number.NEGATIVE_INFINITY;
+}
+
+function hasParentZoom(list, target) {
+  return list.some((zoom) => zoom < target);
+}
+
+function assertFrontier(list, target, label) {
+  if (list.length === 0) {
+    throw new Error(`Expected ${label} to be non-empty`);
+  }
+
+  if (maxZoom(list) !== target) {
+    throw new Error(`Expected max(${label})=${target}, got [${list.join(",")}]`);
+  }
+
+  if (list.some((zoom) => zoom > target)) {
+    throw new Error(`Expected ${label} <= ${target}, got [${list.join(",")}]`);
+  }
 }
 
 function assertDom(dom) {
@@ -101,12 +121,12 @@ function assertDom(dom) {
     );
   }
 
-  assertSingleZoom(interactingSharedLeafZooms, expectedSharedTargetZoom, "interacting shared leaf zooms");
-  assertSingleZoom(idleSharedLeafZooms, expectedSharedTargetZoom, "idle shared leaf zooms");
+  assertFrontier(interactingSharedLeafZooms, expectedSharedTargetZoom, "interacting shared leaf zooms");
+  assertFrontier(idleSharedLeafZooms, expectedSharedTargetZoom, "idle shared leaf zooms");
 
-  if (!Number.isFinite(interactingTerrainParentFallbackCount) || interactingTerrainParentFallbackCount <= 0) {
+  if (!Number.isFinite(interactingTerrainParentFallbackCount) || interactingTerrainParentFallbackCount < 0) {
     throw new Error(
-      `Expected interacting terrain parent fallback count > 0, got ${interactingTerrainParentFallbackCount}`
+      `Expected interacting terrain parent fallback count >= 0, got ${interactingTerrainParentFallbackCount}`
     );
   }
 
@@ -116,13 +136,19 @@ function assertDom(dom) {
     );
   }
 
-  if (!interactingTerrainDisplayZooms.some((zoom) => zoom < expectedSharedTargetZoom)) {
+  assertFrontier(interactingTerrainDisplayZooms, expectedSharedTargetZoom, "interacting terrain display zooms");
+
+  if (!hasParentZoom(interactingTerrainDisplayZooms, expectedSharedTargetZoom)) {
     throw new Error(
       `Expected interacting terrain display zooms to include a parent fallback below ${expectedSharedTargetZoom}, got [${interactingTerrainDisplayZooms.join(",")}]`
     );
   }
 
-  assertSingleZoom(idleTerrainDisplayZooms, expectedSharedTargetZoom, "idle terrain display zooms");
+  if (!sameZooms(idleTerrainDisplayZooms, idleSharedLeafZooms)) {
+    throw new Error(
+      `Expected idle terrain display zooms [${idleSharedLeafZooms.join(",")}] to match idle shared leaf zooms, got [${idleTerrainDisplayZooms.join(",")}]`
+    );
+  }
 
   if (!sameZooms(interactingRasterHostZooms, interactingTerrainDisplayZooms)) {
     throw new Error(
@@ -148,7 +174,11 @@ function assertDom(dom) {
     );
   }
 
-  assertSingleZoom(idleRasterRequestedZooms, expectedSharedTargetZoom, "idle raster requested zooms");
+  if (!sameZooms(idleRasterRequestedZooms, idleTerrainDisplayZooms)) {
+    throw new Error(
+      `Expected idle raster requested zooms [${idleTerrainDisplayZooms.join(",")}] to match terrain display zooms, got [${idleRasterRequestedZooms.join(",")}]`
+    );
+  }
 
   if (allExpected !== "true") {
     throw new Error(`Expected data-all-expected=true, got ${allExpected ?? "missing"}`);

@@ -1,12 +1,4 @@
 import type { TileCoordinate } from "./TileViewport";
-import {
-  planSurfaceTileNodes,
-  uniqueSortedCoordinates,
-  type SurfaceTileSelection,
-  type SurfaceTileSelectionOptions
-} from "./SurfaceTilePlanner";
-
-export type { SurfaceTileSelection, SurfaceTileSelectionOptions } from "./SurfaceTilePlanner";
 
 export interface SurfaceTileBounds {
   west: number;
@@ -32,19 +24,5 @@ export function getSurfaceTileBounds(coordinate: TileCoordinate): SurfaceTileBou
     east,
     south,
     north
-  };
-}
-
-export function selectSurfaceTileCoordinates(
-  options: SurfaceTileSelectionOptions
-): SurfaceTileSelection {
-  const plan = planSurfaceTileNodes({
-    ...options,
-    interactionPhase: "idle"
-  });
-
-  return {
-    zoom: plan.targetZoom,
-    coordinates: uniqueSortedCoordinates(plan.nodes.map((node) => node.coordinate))
   };
 }

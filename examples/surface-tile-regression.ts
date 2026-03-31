@@ -39,7 +39,6 @@ export function runSurfaceTileRegression(
   container: HTMLElement,
   output: HTMLElement
 ): GlobeEngine {
-  let selectedTiles: TileCoordinate[] = [{ z: 2, x: 2, y: 1 }];
   const engine = new GlobeEngine({
     container,
     radius: 1,
@@ -57,10 +56,6 @@ export function runSurfaceTileRegression(
     meshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
-    selectTiles: () => ({
-      zoom: 2,
-      coordinates: selectedTiles,
-    }),
     loadElevationTile: async () => createFlatElevationTile(),
   });
 
@@ -96,21 +91,11 @@ export function runSurfaceTileRegression(
       syncStatus("initial");
 
       window.setTimeout(() => {
-        selectedTiles = [{ z: 2, x: 3, y: 1 }];
         container.dataset.phase = "switching";
-        engine.render();
-
-        void terrain
-          .ready()
-          .then(() => {
-            syncStatus("after-switch");
-          })
-          .catch((error: unknown) => {
-            container.dataset.phase = "error";
-            container.dataset.surfaceTiles = "error";
-            output.textContent =
-              error instanceof Error ? `错误:${error.message}` : "错误:未知";
-          });
+        engine.setView({ lng: 25, lat: 20, altitude: 2.4 });
+        window.setTimeout(() => {
+          syncStatus("after-switch");
+        }, 250);
       }, 150);
     })
     .catch((error: unknown) => {

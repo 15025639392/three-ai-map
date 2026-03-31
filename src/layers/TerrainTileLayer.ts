@@ -20,7 +20,6 @@ import { Layer, LayerContext, LayerRecoveryOverrides } from "./Layer";
 import type { SurfaceTilePlannerConfig, TerrainTileHost } from "./TerrainTileHost";
 import type { TileCoordinate } from "../tiles/TileViewport";
 import type { ElevationEncoding } from "../tiles/ElevationEncoding";
-import type { SurfaceTileSelection, SurfaceTileSelectionOptions } from "../tiles/SurfaceTilePlanner";
 
 export interface TerrainConfig {
   tiles: string[];
@@ -50,8 +49,6 @@ export interface TerrainTileLayerOptions {
   zoomExaggerationBoost?: number;
   skirtDepthMeters?: number;
   textureUvInsetPixels?: number;
-  // Legacy no-op option kept only to avoid breaking existing examples.
-  selectTiles?: (options: SurfaceTileSelectionOptions) => SurfaceTileSelection;
   loadElevationTile?: (
     coordinate: TileCoordinate,
     signal?: AbortSignal

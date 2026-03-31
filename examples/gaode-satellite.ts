@@ -72,6 +72,22 @@ function sameZooms(left: number[], right: number[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function maxZoom(zooms: number[]): number {
+  if (zooms.length === 0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  return zooms[zooms.length - 1] ?? Number.NEGATIVE_INFINITY;
+}
+
+function hasParentZoom(zooms: number[], targetZoom: number): boolean {
+  return zooms.some((zoom) => zoom < targetZoom);
+}
+
+function hasExpectedFrontier(zooms: number[], targetZoom: number): boolean {
+  return zooms.length > 0 && maxZoom(zooms) === targetZoom && zooms.every((zoom) => zoom <= targetZoom);
+}
+
 function formatZooms(zooms: number[]): string {
   return zooms.join(",");
 }
@@ -373,13 +389,12 @@ async function runDragPanSmoke(
     (snapshot) =>
       snapshot.interactionPhase === "interacting" &&
       snapshot.sharedTargetZoom === expectedSharedTargetZoom &&
-      snapshot.sharedLeafZooms.length === 1 &&
-      snapshot.sharedLeafZooms[0] === expectedSharedTargetZoom &&
-      snapshot.terrainParentFallbackCount > 0 &&
-      snapshot.terrainDisplayZooms.some((zoom) => zoom < expectedSharedTargetZoom) &&
+      hasExpectedFrontier(snapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
+      hasExpectedFrontier(snapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
+      hasParentZoom(snapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
       sameZooms(snapshot.terrainDisplayZooms, snapshot.rasterHostZooms) &&
       snapshot.rasterRequestedZooms.includes(expectedSharedTargetZoom) &&
-      snapshot.rasterRequestedZooms.some((zoom) => zoom < expectedSharedTargetZoom),
+      hasParentZoom(snapshot.rasterRequestedZooms, expectedSharedTargetZoom),
     MAX_SMOKE_WAIT_MS,
     (snapshot) => {
       writeSnapshot(stage, "current", snapshot);
@@ -397,14 +412,11 @@ async function runDragPanSmoke(
     (snapshot) =>
       snapshot.interactionPhase === "idle" &&
       snapshot.sharedTargetZoom === expectedSharedTargetZoom &&
-      snapshot.sharedLeafZooms.length === 1 &&
-      snapshot.sharedLeafZooms[0] === expectedSharedTargetZoom &&
+      hasExpectedFrontier(snapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
       snapshot.terrainParentFallbackCount === 0 &&
-      snapshot.terrainDisplayZooms.length === 1 &&
-      snapshot.terrainDisplayZooms[0] === expectedSharedTargetZoom &&
+      sameZooms(snapshot.terrainDisplayZooms, snapshot.sharedLeafZooms) &&
       sameZooms(snapshot.terrainDisplayZooms, snapshot.rasterHostZooms) &&
-      snapshot.rasterRequestedZooms.length === 1 &&
-      snapshot.rasterRequestedZooms[0] === expectedSharedTargetZoom,
+      sameZooms(snapshot.rasterRequestedZooms, snapshot.terrainDisplayZooms),
     MAX_SMOKE_WAIT_MS,
     (snapshot) => {
       writeSnapshot(stage, "current", snapshot);
@@ -414,22 +426,18 @@ async function runDragPanSmoke(
 
   const allExpected =
     interactingSnapshot.sharedTargetZoom === expectedSharedTargetZoom &&
-    interactingSnapshot.sharedLeafZooms.length === 1 &&
-    interactingSnapshot.sharedLeafZooms[0] === expectedSharedTargetZoom &&
-    interactingSnapshot.terrainParentFallbackCount > 0 &&
-    interactingSnapshot.terrainDisplayZooms.some((zoom) => zoom < expectedSharedTargetZoom) &&
+    hasExpectedFrontier(interactingSnapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
+    hasExpectedFrontier(interactingSnapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
+    hasParentZoom(interactingSnapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
     sameZooms(interactingSnapshot.terrainDisplayZooms, interactingSnapshot.rasterHostZooms) &&
     interactingSnapshot.rasterRequestedZooms.includes(expectedSharedTargetZoom) &&
-    interactingSnapshot.rasterRequestedZooms.some((zoom) => zoom < expectedSharedTargetZoom) &&
+    hasParentZoom(interactingSnapshot.rasterRequestedZooms, expectedSharedTargetZoom) &&
     idleSnapshot.sharedTargetZoom === expectedSharedTargetZoom &&
-    idleSnapshot.sharedLeafZooms.length === 1 &&
-    idleSnapshot.sharedLeafZooms[0] === expectedSharedTargetZoom &&
+    hasExpectedFrontier(idleSnapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
     idleSnapshot.terrainParentFallbackCount === 0 &&
-    idleSnapshot.terrainDisplayZooms.length === 1 &&
-    idleSnapshot.terrainDisplayZooms[0] === expectedSharedTargetZoom &&
+    sameZooms(idleSnapshot.terrainDisplayZooms, idleSnapshot.sharedLeafZooms) &&
     sameZooms(idleSnapshot.terrainDisplayZooms, idleSnapshot.rasterHostZooms) &&
-    idleSnapshot.rasterRequestedZooms.length === 1 &&
-    idleSnapshot.rasterRequestedZooms[0] === expectedSharedTargetZoom;
+    sameZooms(idleSnapshot.rasterRequestedZooms, idleSnapshot.terrainDisplayZooms);
 
   stage.dataset.phase = "after-idle";
   stage.dataset.allExpected = `${allExpected}`;

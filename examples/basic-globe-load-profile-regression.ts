@@ -253,7 +253,6 @@ export function runBasicGlobeLoadProfileRegression(
     skirtDepthMeters: 900,
     elevationExaggeration: 1,
     zoomExaggerationBoost: 1.8,
-    selectTiles: ({ camera, radius }) => selectDeterministicTiles({ camera, radius }),
     loadElevationTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(18, () => createElevationTile(coordinate), signal)
   });

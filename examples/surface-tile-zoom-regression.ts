@@ -107,41 +107,6 @@ export function runSurfaceTileZoomRegression(
     meshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
-    selectTiles: ({ camera, radius }) => {
-      const altitude = camera.position.length() - radius;
-
-      if (altitude > 2.2) {
-        return {
-          zoom: 2,
-          coordinates: [
-            { z: 2, x: 2, y: 1 },
-            { z: 2, x: 3, y: 1 },
-          ],
-        };
-      }
-
-      if (altitude > 1.35) {
-        return {
-          zoom: 3,
-          coordinates: [
-            { z: 3, x: 4, y: 2 },
-            { z: 3, x: 5, y: 2 },
-            { z: 3, x: 4, y: 3 },
-            { z: 3, x: 5, y: 3 },
-          ],
-        };
-      }
-
-      return {
-        zoom: 4,
-        coordinates: [
-          { z: 4, x: 8, y: 4 },
-          { z: 4, x: 9, y: 4 },
-          { z: 4, x: 8, y: 5 },
-          { z: 4, x: 9, y: 5 },
-        ],
-      };
-    },
     loadElevationTile: async (_coordinate, signal?: AbortSignal) =>
       delayValue(18, () => createFlatElevationTile(), signal),
   });

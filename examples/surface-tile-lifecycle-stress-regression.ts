@@ -97,13 +97,6 @@ function createTerrainLayer(layerId: string): TerrainTileLayer {
     meshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
-    selectTiles: () => ({
-      zoom: 2,
-      coordinates: [
-        { z: 2, x: 2, y: 1 },
-        { z: 2, x: 3, y: 1 }
-      ]
-    }),
     loadElevationTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(6, () => createElevationTile(coordinate), signal)
   });

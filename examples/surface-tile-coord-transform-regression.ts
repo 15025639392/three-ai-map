@@ -9,10 +9,6 @@ interface TileCoordinate {
 }
 
 const FIXED_COORDINATE: TileCoordinate = { z: 2, x: 2, y: 1 };
-const FIXED_SELECTION = {
-  zoom: FIXED_COORDINATE.z,
-  coordinates: [FIXED_COORDINATE]
-};
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
   stage.style.width = `${width}px`;
@@ -87,7 +83,6 @@ export function runSurfaceTileCoordTransformRegression(
     meshSegments: 4,
     skirtDepthMeters: 0,
     textureUvInsetPixels: 0,
-    selectTiles: () => FIXED_SELECTION,
     loadElevationTile: async () => createFlatElevationTile()
   };
   const noTransformLayer = new TerrainTileLayer("surface-coord-base", {
