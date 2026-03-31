@@ -21,7 +21,7 @@ export function cartographicToCartesian(
   return {
     x: radialDistance * cosLat * Math.cos(lng),
     y: radialDistance * Math.sin(lat),
-    z: radialDistance * cosLat * Math.sin(lng)
+    z: -radialDistance * cosLat * Math.sin(lng)
   };
 }
 
@@ -38,7 +38,7 @@ export function cartesianToCartographic(
   }
 
   return {
-    lng: normalizeLongitude(toDegrees(Math.atan2(cartesian.z, cartesian.x))),
+    lng: normalizeLongitude(toDegrees(Math.atan2(-cartesian.z, cartesian.x))),
     lat: clampLatitude(toDegrees(Math.asin(cartesian.y / radialDistance))),
     height: radialDistance - radius
   };

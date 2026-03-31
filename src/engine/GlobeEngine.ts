@@ -70,7 +70,6 @@ export class GlobeEngine {
 
   private readonly rendererSystem: RendererAdapter;
   private readonly cameraController: CameraController;
-  private readonly mirrorDisplayX: boolean;
   private readonly layerManager: LayerManager;
   private readonly sourceManager: SourceManager;
   private readonly interactionAnchorOverlay: InteractionAnchorOverlay | null;
@@ -104,7 +103,6 @@ export class GlobeEngine {
     background = "#03060d",
     showBaseGlobe = true,
     showInteractionAnchor = false,
-    mirrorDisplayX = true,
     camera,
     recoveryPolicy,
     rendererFactory = createDefaultRenderer
@@ -112,7 +110,6 @@ export class GlobeEngine {
     this.container = container;
     this.radius = radius;
     this.showBaseGlobe = showBaseGlobe;
-    this.mirrorDisplayX = mirrorDisplayX;
     this.sceneSystem = new SceneSystem({
       fieldOfView: camera?.fov,
       near: camera?.near,
@@ -129,10 +126,6 @@ export class GlobeEngine {
       "-webkit-tap-highlight-color",
       "transparent"
     );
-    if (this.mirrorDisplayX) {
-      this.rendererSystem.renderer.domElement.style.transform = "scaleX(-1)";
-      this.rendererSystem.renderer.domElement.style.transformOrigin = "50% 50%";
-    }
     this.recoveryPolicyDefaults = { ...(recoveryPolicy?.defaults ?? {}) };
     this.recoveryPolicyRules = [...(recoveryPolicy?.rules ?? [])];
     this.globe = new GlobeMesh({ radius });
@@ -166,7 +159,6 @@ export class GlobeEngine {
       camera: this.sceneSystem.camera,
       element: this.rendererSystem.renderer.domElement,
       globeRadius: radius,
-      mirrorDisplayX: this.mirrorDisplayX,
       onChange: this.handleCameraChange
     });
     this.interactionAnchorOverlay = showInteractionAnchor
@@ -326,10 +318,7 @@ export class GlobeEngine {
     const rect = this.rendererSystem.renderer.domElement.getBoundingClientRect();
     const width = rect.width || 1;
     const height = rect.height || 1;
-    const localX = screenX - rect.left;
-    const mappedX = this.mirrorDisplayX ? width - localX : localX;
-
-    this.pointer.x = (mappedX / width) * 2 - 1;
+    this.pointer.x = ((screenX - rect.left) / width) * 2 - 1;
     this.pointer.y = -((screenY - rect.top) / height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.sceneSystem.camera);
 

@@ -260,7 +260,7 @@ function appendSkirt(
     const bottomLeft = skirtStart + index;
     const bottomRight = skirtStart + index + 1;
     // Counter-clockwise winding for outward-facing normals.
-    indices.push(topLeft, topRight, bottomLeft, topRight, bottomRight, bottomLeft);
+    indices.push(topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight);
   }
 }
 
@@ -322,7 +322,7 @@ function buildTerrainTileGeometry(
       const bottomLeft = topLeft + rowSize;
       const bottomRight = bottomLeft + 1;
       // Counter-clockwise winding for outward-facing normals.
-      indices.push(topLeft, topRight, bottomLeft, topRight, bottomRight, bottomLeft);
+      indices.push(topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight);
     }
   }
 
