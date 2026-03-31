@@ -43,8 +43,11 @@ export interface CoordTransformFn {
 
 export interface TerrainTileLayerOptions {
   terrain: TerrainConfig;
-  meshSegments?: number;
+  minMeshSegments?: number;
+  maxMeshSegments?: number;
   concurrency?: number;
+  schedulerMaxQueue?: number;
+  schedulerAgingFactor?: number;
   elevationExaggeration?: number;
   zoomExaggerationBoost?: number;
   skirtDepthMeters?: number;
@@ -77,6 +80,7 @@ interface TerrainTileEntry {
   promise: Promise<void>;
   mesh: Mesh<BufferGeometry, MeshStandardMaterial> | null;
   skirtMaskKey: string;
+  meshSegments: number;
   displayState: TerrainDisplayState;
   visible: boolean;
   geomorph: TerrainGeomorphState | null;
@@ -152,6 +156,11 @@ function buildSelectionKey(coordinates: TileCoordinate[]): string {
 
 function createDefaultSkirtMask(): TileSkirtMask {
   return { top: true, right: true, bottom: true, left: true };
+}
+
+function clampMeshSegments(value: number): number {
+  const finite = Number.isFinite(value) ? Math.floor(value) : 2;
+  return Math.max(2, Math.min(128, finite));
 }
 
 function encodeSkirtMask(mask: TileSkirtMask): string {
@@ -349,6 +358,7 @@ function buildTerrainTileGeometry(
   geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.userData.surfaceVertexCount = rowSize * rowSize;
+  geometry.userData.surfaceGridSize = rowSize;
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
   return geometry;
@@ -367,6 +377,11 @@ function copyGeometryPositions(geometry: BufferGeometry): Float32Array | null {
 function resolveSurfaceVertexCount(geometry: BufferGeometry): number {
   const value = geometry.userData.surfaceVertexCount;
   return typeof value === "number" && value > 0 ? value : 0;
+}
+
+function resolveSurfaceGridSize(geometry: BufferGeometry): number {
+  const value = geometry.userData.surfaceGridSize;
+  return typeof value === "number" && value >= 2 ? value : 0;
 }
 
 function sampleSurfacePosition(
@@ -511,7 +526,8 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private readonly minZoom: number;
   private readonly maxZoom: number;
   private readonly tileSize: number;
-  private readonly meshSegments: number;
+  private readonly minMeshSegments: number;
+  private readonly maxMeshSegments: number;
   private readonly skirtDepthMeters: number;
   private readonly textureUvInsetPixels: number;
   private readonly elevationExaggeration: number;
@@ -538,7 +554,10 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     this.minZoom = options.terrain.minZoom ?? 1;
     this.maxZoom = options.terrain.maxZoom ?? 8;
     this.tileSize = options.terrain.tileSize ?? 256;
-    this.meshSegments = options.meshSegments ?? 16;
+    const resolvedMinMeshSegments = clampMeshSegments(options.minMeshSegments ?? 8);
+    const resolvedMaxMeshSegments = clampMeshSegments(options.maxMeshSegments ?? 16);
+    this.minMeshSegments = Math.min(resolvedMinMeshSegments, resolvedMaxMeshSegments);
+    this.maxMeshSegments = Math.max(resolvedMinMeshSegments, resolvedMaxMeshSegments);
     this.skirtDepthMeters = options.skirtDepthMeters ?? 900;
     this.textureUvInsetPixels = options.textureUvInsetPixels ?? 0.5;
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
@@ -563,6 +582,8 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
     this.elevationScheduler = new TileScheduler({
       concurrency: options.concurrency ?? 6,
+      maxQueueSize: options.schedulerMaxQueue ?? Math.max(96, (options.concurrency ?? 6) * 64),
+      agingFactor: options.schedulerAgingFactor ?? 12,
       loadTile: loadElevationTile
     });
 
@@ -608,7 +629,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
   getSurfaceTilePlannerConfig(): SurfaceTilePlannerConfig {
     return {
-      tileSize: this.tileSize,
+      meshMaxSegments: this.maxMeshSegments,
       minZoom: this.minZoom,
       maxZoom: this.maxZoom
     };
@@ -656,6 +677,9 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     const desiredMorphFactors = new Map(
       sharedPlan.nodes.map((node) => [node.key, node.morphFactor] as const)
     );
+    const desiredPriorities = new Map(
+      sharedPlan.nodes.map((node) => [node.key, node.priority] as const)
+    );
     const desiredTileSkirtMasks = computeTileSkirtMasks(desiredCoordinates);
     const selectionKey = buildSelectionKey(desiredCoordinates);
 
@@ -678,7 +702,9 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
         coordinate,
         context.radius,
         desiredTileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask(),
-        "readyLeaf"
+        "readyLeaf",
+        sharedPlan.interactionPhase,
+        desiredPriorities.get(tileCoordinateKey(coordinate))
       )
     );
     const displayCoordinates = this.resolveDisplayCoordinates(desiredCoordinates);
@@ -743,7 +769,9 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
         coordinate,
         context.radius,
         displayTileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask(),
-        desiredKeys.has(tileCoordinateKey(coordinate)) ? "readyLeaf" : "parentFallback"
+        desiredKeys.has(tileCoordinateKey(coordinate)) ? "readyLeaf" : "parentFallback",
+        sharedPlan.interactionPhase,
+        desiredPriorities.get(tileCoordinateKey(coordinate))
       )
     );
 
@@ -937,7 +965,6 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     }
 
     positionAttribute.needsUpdate = true;
-    entry.mesh.geometry.computeVertexNormals();
     entry.mesh.geometry.computeBoundingSphere();
   }
 
@@ -950,39 +977,80 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     return this.elevationExaggeration + t * this.zoomExaggerationBoost;
   }
 
+  private resolveMeshSegments(zoom: number, interactionPhase: "idle" | "interacting"): number {
+    if (this.maxMeshSegments <= this.minMeshSegments || this.maxZoom <= this.minZoom) {
+      return this.maxMeshSegments;
+    }
+
+    const zoomT = Math.max(0, Math.min(1, (zoom - this.minZoom) / (this.maxZoom - this.minZoom)));
+    const blended = this.minMeshSegments + (this.maxMeshSegments - this.minMeshSegments) * zoomT;
+    const rounded = Math.round(blended);
+    const interactionAdjusted = interactionPhase === "interacting"
+      ? Math.max(this.minMeshSegments, Math.floor(rounded * 0.75))
+      : rounded;
+
+    return clampMeshSegments(interactionAdjusted);
+  }
+
+  private resolveRequestPriority(coordinate: TileCoordinate, hint?: number): number {
+    if (Number.isFinite(hint)) {
+      return Math.floor(hint ?? 0);
+    }
+
+    return coordinate.z * 16;
+  }
+
   private ensureTile(
     coordinate: TileCoordinate,
     radius: number,
     skirtMask: TileSkirtMask,
-    displayState: TerrainDisplayState
+    displayState: TerrainDisplayState,
+    interactionPhase: "idle" | "interacting",
+    priorityHint?: number
   ): Promise<void> {
     const key = tileCoordinateKey(coordinate);
     const existing = this.activeTiles.get(key);
     const skirtMaskKey = encodeSkirtMask(skirtMask);
+    const meshSegments = this.resolveMeshSegments(coordinate.z, interactionPhase);
+    const requestPriority = this.resolveRequestPriority(coordinate, priorityHint);
 
-    if (existing && existing.skirtMaskKey === skirtMaskKey) {
+    if (
+      existing &&
+      existing.skirtMaskKey === skirtMaskKey &&
+      existing.meshSegments === meshSegments
+    ) {
       existing.displayState = displayState;
       return existing.promise;
     }
 
-    const entry: TerrainTileEntry = existing ?? {
+    const entry: TerrainTileEntry = {
       coordinate,
       promise: Promise.resolve(),
-      mesh: null,
+      mesh: existing?.mesh ?? null,
       skirtMaskKey,
+      meshSegments,
       displayState,
-      visible: false,
+      visible: existing?.visible ?? false,
       geomorph: null
     };
     entry.coordinate = coordinate;
     entry.skirtMaskKey = skirtMaskKey;
+    entry.meshSegments = meshSegments;
     entry.displayState = displayState;
     this.activeTiles.set(key, entry);
 
     const isCurrent = () => this.activeTiles.get(key) === entry;
     const elevationExaggeration = this.computeElevationExaggeration(coordinate.z);
 
-    entry.promise = this.loadTileMesh(coordinate, radius, skirtMask, elevationExaggeration, isCurrent)
+    entry.promise = this.loadTileMesh(
+      coordinate,
+      radius,
+      meshSegments,
+      skirtMask,
+      requestPriority,
+      elevationExaggeration,
+      isCurrent
+    )
       .then((loaded) => {
         if (!isCurrent()) {
           loaded.mesh.geometry.dispose();
@@ -1029,7 +1097,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
         const geometry = buildTerrainTileGeometry(
           coordinate,
           radius,
-          this.meshSegments,
+          meshSegments,
           null,
           elevationExaggeration,
           this.skirtDepthMeters,
@@ -1066,7 +1134,9 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private async loadTileMesh(
     coordinate: TileCoordinate,
     radius: number,
+    meshSegments: number,
     skirtMask: TileSkirtMask,
+    requestPriority: number,
     elevationExaggeration: number,
     isCurrent: () => boolean
   ): Promise<LoadedTerrainTileMesh> {
@@ -1083,7 +1153,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       elevation = this.elevationCache.get(key) ?? null;
 
       if (!elevation) {
-        elevation = await this.loadElevationWithRecovery(key, coordinate);
+        elevation = await this.loadElevationWithRecovery(key, coordinate, requestPriority);
         if (elevation) {
           this.elevationCache.set(key, elevation);
         }
@@ -1097,7 +1167,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     const geometry = buildTerrainTileGeometry(
       coordinate,
       radius,
-      this.meshSegments,
+      meshSegments,
       elevation,
       elevationExaggeration,
       this.skirtDepthMeters,
@@ -1134,18 +1204,19 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       return null;
     }
 
-    if (this.meshSegments <= 0) {
-      return null;
-    }
-
     const targetPositions = copyGeometryPositions(geometry);
 
     if (!targetPositions) {
       return null;
     }
 
-    const gridSize = this.meshSegments + 1;
-    const expectedSurfaceVertexCount = gridSize * gridSize;
+    const childGridSize = resolveSurfaceGridSize(geometry);
+
+    if (childGridSize < 2) {
+      return null;
+    }
+
+    const expectedSurfaceVertexCount = childGridSize * childGridSize;
     const surfaceVertexCount = resolveSurfaceVertexCount(geometry);
 
     if (surfaceVertexCount !== expectedSurfaceVertexCount) {
@@ -1160,9 +1231,16 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       return null;
     }
 
-    const parentSurfaceVertexCount = resolveSurfaceVertexCount(parentGeometry);
+    const parentGridSize = resolveSurfaceGridSize(parentGeometry);
 
-    if (parentSurfaceVertexCount !== expectedSurfaceVertexCount) {
+    if (parentGridSize < 2) {
+      return null;
+    }
+
+    const parentSurfaceVertexCount = resolveSurfaceVertexCount(parentGeometry);
+    const expectedParentVertexCount = parentGridSize * parentGridSize;
+
+    if (parentSurfaceVertexCount !== expectedParentVertexCount) {
       return null;
     }
 
@@ -1175,16 +1253,22 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     const basePositions = new Float32Array(targetPositions);
     const quadrantX = coordinate.x % 2;
     const quadrantY = coordinate.y % 2;
+    const childSegments = childGridSize - 1;
     let hasDifference = false;
 
-    for (let row = 0; row < gridSize; row += 1) {
-      for (let column = 0; column < gridSize; column += 1) {
-        const u = column / this.meshSegments;
-        const v = row / this.meshSegments;
+    for (let row = 0; row < childGridSize; row += 1) {
+      for (let column = 0; column < childGridSize; column += 1) {
+        const u = childSegments <= 0 ? 0 : column / childSegments;
+        const v = childSegments <= 0 ? 0 : row / childSegments;
         const parentU = (quadrantX + u) * 0.5;
         const parentV = (quadrantY + v) * 0.5;
-        const [sampleX, sampleY, sampleZ] = sampleSurfacePosition(parentPositions, gridSize, parentU, parentV);
-        const offset = (row * gridSize + column) * 3;
+        const [sampleX, sampleY, sampleZ] = sampleSurfacePosition(
+          parentPositions,
+          parentGridSize,
+          parentU,
+          parentV
+        );
+        const offset = (row * childGridSize + column) * 3;
 
         basePositions[offset] = sampleX;
         basePositions[offset + 1] = sampleY;
@@ -1213,7 +1297,8 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
   private async loadElevationWithRecovery(
     tileKey: string,
-    coordinate: TileCoordinate
+    coordinate: TileCoordinate,
+    priority: number
   ): Promise<ElevationTileData | null> {
     const recoveryConfig = this.cachedElevationRecoveryConfig ?? (
       this.cachedElevationRecoveryConfig = resolveElevationRecoveryConfig(this.context, this.id, undefined)
@@ -1225,7 +1310,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
     for (let attempt = 0; attempt <= attempts; attempt += 1) {
       try {
-        return await this.elevationScheduler.request(tileKey, coordinate);
+        return await this.elevationScheduler.request(tileKey, coordinate, { priority });
       } catch (error) {
         if (isTileRequestAbort(error)) {
           throw error;

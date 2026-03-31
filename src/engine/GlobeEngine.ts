@@ -53,7 +53,7 @@ interface RecoveryStageStats {
   ruleHitCount: number;
 }
 
-const SURFACE_TILE_PLAN_TILE_SIZE = 256;
+const SURFACE_TILE_PLAN_MESH_MAX_SEGMENTS = 32;
 const SURFACE_TILE_PLAN_MIN_ZOOM = 1;
 const SURFACE_TILE_PLAN_MAX_ZOOM = 18;
 const SURFACE_TILE_NODE_MORPH_DURATION_MS = 220;
@@ -581,7 +581,7 @@ export class GlobeEngine {
       viewportWidth,
       viewportHeight,
       radius: this.radius,
-      tileSize: plannerConfig?.tileSize ?? SURFACE_TILE_PLAN_TILE_SIZE,
+      meshMaxSegments: plannerConfig?.meshMaxSegments ?? SURFACE_TILE_PLAN_MESH_MAX_SEGMENTS,
       minZoom: plannerConfig?.minZoom ?? SURFACE_TILE_PLAN_MIN_ZOOM,
       maxZoom: plannerConfig?.maxZoom ?? SURFACE_TILE_PLAN_MAX_ZOOM,
       interactionPhase: this.surfaceTileInteractionPhase

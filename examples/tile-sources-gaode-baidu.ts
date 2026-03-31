@@ -82,7 +82,8 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
       cache: 128,
       extraBounds: [] // Disable DEM outside configured bounds (Gaode imagery only).
     },
-    meshSegments: 16,
+    maxMeshSegments: 16,
+    minMeshSegments: 16,
     concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
     skirtDepthMeters: 500,
@@ -138,7 +139,8 @@ export function runGaodeSatelliteLabels(container: HTMLElement, output?: HTMLEle
       cache: 128,
       extraBounds: []
     },
-    meshSegments: 16,
+    minMeshSegments: 16,
+    maxMeshSegments: 16,
     concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
     skirtDepthMeters: 500,
@@ -200,7 +202,8 @@ export function runGaodeRoad(container: HTMLElement, output?: HTMLElement): Glob
       cache: 128,
       extraBounds: []
     },
-    meshSegments: 16,
+    minMeshSegments: 16,
+    maxMeshSegments: 16,
     concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
     skirtDepthMeters: 500,
@@ -255,7 +258,8 @@ export function runBaiduSatellite(container: HTMLElement, output?: HTMLElement):
       cache: 128,
       extraBounds: []
     },
-    meshSegments: 16,
+    minMeshSegments: 16,
+    maxMeshSegments: 16,
     concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToBd09({ lng, lat }),
     skirtDepthMeters: 500,
@@ -307,7 +311,8 @@ export function runBaiduRoad(container: HTMLElement, output?: HTMLElement): Glob
       cache: 128,
       extraBounds: []
     },
-    meshSegments: 16,
+    minMeshSegments: 16,
+    maxMeshSegments: 16,
     concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToBd09({ lng, lat }),
     skirtDepthMeters: 500,

@@ -258,7 +258,8 @@ export function runBasicGlobeLoadRecoveryDriftRegression(
       tileSize: 128,
       cache: 96
     },
-    meshSegments: 3,
+    minMeshSegments: 3,
+    maxMeshSegments: 3,
     skirtDepthMeters: 900,
     elevationExaggeration: 1,
     zoomExaggerationBoost: 1.8,

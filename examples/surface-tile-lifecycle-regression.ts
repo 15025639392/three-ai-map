@@ -90,7 +90,8 @@ function createTerrainLayer(layerId: string): TerrainTileLayer {
       tileSize: 128,
       cache: 64,
     },
-    meshSegments: 2,
+    minMeshSegments: 2,
+    maxMeshSegments: 2,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
     loadElevationTile: async (coordinate, signal?: AbortSignal) =>

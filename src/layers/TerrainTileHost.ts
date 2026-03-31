@@ -1,7 +1,7 @@
 import type { BufferGeometry, Mesh, MeshStandardMaterial } from "three";
 
 export interface SurfaceTilePlannerConfig {
-  tileSize: number;
+  meshMaxSegments: number;
   minZoom: number;
   maxZoom: number;
 }

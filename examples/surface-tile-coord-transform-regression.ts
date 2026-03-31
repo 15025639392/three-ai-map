@@ -80,7 +80,8 @@ export function runSurfaceTileCoordTransformRegression(
       tileSize: 256,
       cache: 4,
     },
-    meshSegments: 4,
+    minMeshSegments: 4,
+    maxMeshSegments: 4,
     skirtDepthMeters: 0,
     textureUvInsetPixels: 0,
     loadElevationTile: async () => createFlatElevationTile()

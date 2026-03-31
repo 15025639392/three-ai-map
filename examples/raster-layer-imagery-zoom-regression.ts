@@ -68,7 +68,8 @@ export function runRasterLayerImageryZoomRegression(
       tileSize: 256,
       cache: 8
     },
-    meshSegments: 8,
+    minMeshSegments: 8,
+    maxMeshSegments: 8,
     skirtDepthMeters: 0,
     elevationExaggeration: 0,
     loadElevationTile: async () => createFlatElevationTile()

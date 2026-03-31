@@ -12,6 +12,8 @@ export interface RasterTileSourceOptions {
   maxZoom?: number;
   cache?: number;
   concurrency?: number;
+  schedulerMaxQueue?: number;
+  schedulerAgingFactor?: number;
   loadTile?: (coordinate: TileCoordinate, signal?: AbortSignal) => Promise<TileSource>;
 }
 
@@ -54,6 +56,8 @@ export class RasterTileSource implements Source {
 
     this.scheduler = new TileScheduler({
       concurrency: options.concurrency ?? 6,
+      maxQueueSize: options.schedulerMaxQueue ?? Math.max(192, (options.concurrency ?? 6) * 96),
+      agingFactor: options.schedulerAgingFactor ?? 12,
       loadTile
     });
   }

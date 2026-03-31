@@ -1,5 +1,7 @@
 interface TileSchedulerOptions<TValue, TPayload> {
   concurrency: number;
+  maxQueueSize?: number;
+  agingFactor?: number;
   loadTile: (payload: TPayload, signal?: AbortSignal) => Promise<TValue>;
 }
 
@@ -39,6 +41,8 @@ interface QueuedRequest<TValue, TPayload> {
 
 export class TileScheduler<TValue, TPayload = unknown> {
   private readonly concurrency: number;
+  private readonly maxQueueSize: number;
+  private readonly agingFactor: number;
   private readonly loadTile: (payload: TPayload, signal?: AbortSignal) => Promise<TValue>;
   private readonly inflight = new Map<string, QueuedRequest<TValue, TPayload>>();
   private readonly queue: Array<QueuedRequest<TValue, TPayload>> = [];
@@ -51,8 +55,15 @@ export class TileScheduler<TValue, TPayload = unknown> {
   private failedCount = 0;
   private cancelledCount = 0;
 
-  constructor({ concurrency, loadTile }: TileSchedulerOptions<TValue, TPayload>) {
-    this.concurrency = concurrency;
+  constructor({ concurrency, maxQueueSize, agingFactor, loadTile }: TileSchedulerOptions<TValue, TPayload>) {
+    const resolvedConcurrency = Number.isFinite(concurrency) ? Math.floor(concurrency) : 1;
+    this.concurrency = Math.max(1, resolvedConcurrency);
+    this.maxQueueSize = Number.isFinite(maxQueueSize)
+      ? Math.max(1, Math.floor(maxQueueSize ?? 1))
+      : Number.POSITIVE_INFINITY;
+    this.agingFactor = Number.isFinite(agingFactor)
+      ? Math.max(0, agingFactor ?? 0)
+      : 0;
     this.loadTile = loadTile;
   }
 
@@ -70,6 +81,7 @@ export class TileScheduler<TValue, TPayload = unknown> {
         if (existing.priority !== nextPriority) {
           existing.priority = nextPriority;
           this.sortQueue();
+          this.trimQueue();
         }
       }
 
@@ -98,6 +110,7 @@ export class TileScheduler<TValue, TPayload = unknown> {
     this.inflight.set(key, request);
     this.queue.push(request);
     this.sortQueue();
+    this.trimQueue();
     this.processQueue();
     return promise;
   }
@@ -192,12 +205,47 @@ export class TileScheduler<TValue, TPayload = unknown> {
 
   private sortQueue(): void {
     this.queue.sort((left, right) => {
-      if (left.priority !== right.priority) {
-        return right.priority - left.priority;
+      const leftPriority = this.getEffectivePriority(left);
+      const rightPriority = this.getEffectivePriority(right);
+
+      if (leftPriority !== rightPriority) {
+        return rightPriority - leftPriority;
       }
 
       return left.order - right.order;
     });
+  }
+
+  private getEffectivePriority(request: QueuedRequest<TValue, TPayload>): number {
+    if (this.agingFactor <= 0) {
+      return request.priority;
+    }
+
+    const waitedRequests = this.nextOrder - request.order;
+    return request.priority + waitedRequests / this.agingFactor;
+  }
+
+  private trimQueue(): void {
+    if (!Number.isFinite(this.maxQueueSize) || this.queue.length <= this.maxQueueSize) {
+      return;
+    }
+
+    while (this.queue.length > this.maxQueueSize) {
+      const dropped = this.queue.pop();
+
+      if (!dropped) {
+        break;
+      }
+
+      this.inflight.delete(dropped.key);
+      this.cancelledCount += 1;
+      const error = new TileRequestCancelledError(
+        `TileScheduler dropped ${dropped.key} due to queue saturation`
+      );
+      queueMicrotask(() => {
+        dropped.reject(error);
+      });
+    }
   }
 
   private removeFromQueue(request: QueuedRequest<TValue, TPayload>): void {

@@ -200,6 +200,8 @@ const PRIORITY_BASELINE = 100_000;
 const RASTER_CROSSFADE_DURATION_MS = 220;
 const RASTER_CROSSFADE_EPSILON = 1e-4;
 const POLAR_CAP_SEGMENTS = 10;
+const MAX_INTERACTING_DETAIL_REQUESTS_PER_HOST = 16;
+const MAX_IDLE_DETAIL_REQUESTS_PER_HOST = 48;
 
 const CAP_P0 = new Vector3();
 const CAP_P1 = new Vector3();
@@ -592,6 +594,27 @@ function dedupeRasterRequests(requests: RasterTileRequest[]): RasterTileRequest[
   return [...deduped.values()];
 }
 
+function resolveDetailRequestBudget(
+  hostCoordinate: TileCoordinate,
+  imageryZoom: number,
+  interactionPhase: SurfaceTilePlan["interactionPhase"]
+): number {
+  const zoomDelta = Math.max(0, imageryZoom - hostCoordinate.z);
+  const theoreticalCoverageCount = Math.max(1, 2 ** (zoomDelta * 2));
+
+  if (interactionPhase === "interacting") {
+    return Math.max(
+      1,
+      Math.min(MAX_INTERACTING_DETAIL_REQUESTS_PER_HOST, theoreticalCoverageCount)
+    );
+  }
+
+  return Math.max(
+    1,
+    Math.min(MAX_IDLE_DETAIL_REQUESTS_PER_HOST, theoreticalCoverageCount)
+  );
+}
+
 
 function createSharedRasterTilePlans(
   source: RasterTileSource,
@@ -637,7 +660,7 @@ function createSharedRasterTilePlans(
       "fallback"
     );
     const baseRequestSignatures = new Set(baseRequests.map((request) => getRasterRequestSignature(request)));
-    const detailRequests = sortRequestsByPriority(
+    const detailRequestCandidates = sortRequestsByPriority(
       dedupeRasterRequests(detailCoordinates.flatMap((coordinate) => {
         const request = createRequestForCoordinate(
           hostCoordinate,
@@ -654,6 +677,12 @@ function createSharedRasterTilePlans(
         return [request];
       }))
     );
+    const detailRequestBudget = resolveDetailRequestBudget(
+      hostCoordinate,
+      imageryZoom,
+      sharedPlan.interactionPhase
+    );
+    const detailRequests = detailRequestCandidates.slice(0, detailRequestBudget);
     const requestKey = [
       hostKey,
       `target:${imageryZoom}`,

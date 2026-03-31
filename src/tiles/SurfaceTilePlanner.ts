@@ -8,7 +8,7 @@ export interface SurfaceTileSelectionOptions {
   viewportWidth: number;
   viewportHeight: number;
   radius: number;
-  tileSize: number;
+  meshMaxSegments: number;
   minZoom: number;
   maxZoom: number;
 }
@@ -40,7 +40,11 @@ export interface SurfaceTilePlan {
 interface TileMetrics {
   center: Vector3;
   sphereRadius: number;
-  geometricError: number;
+}
+
+interface NodeEvaluation {
+  visible: boolean;
+  sse: number;
 }
 
 interface CandidateNode {
@@ -64,11 +68,19 @@ interface TileBounds {
 const PRIORITY_BASELINE = 100_000;
 const MIN_DISTANCE_EPSILON = 1e-6;
 const HORIZON_EPSILON = 1e-6;
-const IDLE_SSE_THRESHOLD = 1.0;
-const INTERACTING_SSE_THRESHOLD = 2.2;
-const IDLE_MAX_LEAF_NODES = 1024;
-const INTERACTING_MAX_LEAF_NODES = 320;
-const MAX_SPLIT_STEPS = 8192;
+const IDLE_SSE_THRESHOLD = 1.25;
+const INTERACTING_SSE_THRESHOLD = 3.2;
+const TILE_BUDGET_PIXEL_AREA = 18_000;
+const IDLE_FRONTIER_SCALE = 3.2;
+const INTERACTING_FRONTIER_SCALE = 2.2;
+const MIN_IDLE_FRONTIER_NODES = 128;
+const MAX_IDLE_FRONTIER_NODES = 1_536;
+const MIN_INTERACTING_FRONTIER_NODES = 96;
+const MAX_INTERACTING_FRONTIER_NODES = 768;
+const MIN_IDLE_REFINEMENT_STEPS = 2_048;
+const MIN_INTERACTING_REFINEMENT_STEPS = 1_024;
+const MAX_IDLE_REFINEMENT_STEPS = 16_384;
+const MAX_INTERACTING_REFINEMENT_STEPS = 8_192;
 
 const FRUSTUM = new Frustum();
 const FRUSTUM_MATRIX = new Matrix4();
@@ -165,11 +177,7 @@ function getChildCoordinates(coordinate: TileCoordinate): TileCoordinate[] {
   ];
 }
 
-function buildTileMetrics(
-  coordinate: TileCoordinate,
-  radius: number,
-  tileSize: number
-): TileMetrics {
+function buildTileMetrics(coordinate: TileCoordinate, radius: number): TileMetrics {
   const bounds = getTileBounds(coordinate);
   const points: Vector3[] = [];
 
@@ -184,6 +192,7 @@ function buildTileMetrics(
   }
 
   SAMPLE_SUM.set(0, 0, 0);
+
   for (const point of points) {
     SAMPLE_SUM.add(point);
   }
@@ -200,13 +209,28 @@ function buildTileMetrics(
     sphereRadius = Math.max(sphereRadius, point.distanceTo(SAMPLE_CARTESIAN));
   }
 
-  const geometricError = (sphereRadius * 2) / Math.max(1, tileSize);
-
   return {
     center: SAMPLE_CARTESIAN.clone(),
-    sphereRadius,
-    geometricError
+    sphereRadius
   };
+}
+
+function buildLevelGeometricErrorByZoom(
+  radius: number,
+  meshMaxSegments: number,
+  minZoom: number,
+  maxZoom: number
+): Map<number, number> {
+  const byZoom = new Map<number, number>();
+  const meshResolution = Math.max(2, Math.floor(meshMaxSegments));
+
+  for (let zoom = minZoom; zoom <= maxZoom; zoom += 1) {
+    const tilesAroundEquator = 2 ** zoom;
+    const tileSpan = (Math.PI * 2 * radius) / tilesAroundEquator;
+    byZoom.set(zoom, tileSpan / meshResolution);
+  }
+
+  return byZoom;
 }
 
 function computeNodePriority(
@@ -216,37 +240,77 @@ function computeNodePriority(
   const center = centerByZoom.get(coordinate.z);
 
   if (!center) {
-    return PRIORITY_BASELINE;
+    return PRIORITY_BASELINE + coordinate.z * 16;
   }
 
   const dx = shortestWrappedTileDistance(coordinate.x, center.x, coordinate.z);
   const dy = Math.abs(coordinate.y - center.y);
   const distancePenalty = dx * dx + dy * dy;
-  return PRIORITY_BASELINE - distancePenalty;
+  return PRIORITY_BASELINE + coordinate.z * 16 - distancePenalty;
 }
 
 function getSseThreshold(interactionPhase: SurfaceTileInteractionPhase): number {
   return interactionPhase === "idle" ? IDLE_SSE_THRESHOLD : INTERACTING_SSE_THRESHOLD;
 }
 
-function getLeafBudget(interactionPhase: SurfaceTileInteractionPhase): number {
-  return interactionPhase === "idle" ? IDLE_MAX_LEAF_NODES : INTERACTING_MAX_LEAF_NODES;
+function resolveFrontierBudget(
+  viewportWidth: number,
+  viewportHeight: number,
+  interactionPhase: SurfaceTileInteractionPhase
+): number {
+  const viewportArea = Math.max(1, viewportWidth * viewportHeight);
+  const baselineTileCount = Math.ceil(viewportArea / TILE_BUDGET_PIXEL_AREA);
+
+  if (interactionPhase === "interacting") {
+    return Math.max(
+      MIN_INTERACTING_FRONTIER_NODES,
+      Math.min(
+        MAX_INTERACTING_FRONTIER_NODES,
+        Math.round(baselineTileCount * INTERACTING_FRONTIER_SCALE)
+      )
+    );
+  }
+
+  return Math.max(
+    MIN_IDLE_FRONTIER_NODES,
+    Math.min(
+      MAX_IDLE_FRONTIER_NODES,
+      Math.round(baselineTileCount * IDLE_FRONTIER_SCALE)
+    )
+  );
+}
+
+function resolveRefinementStepBudget(
+  frontierBudget: number,
+  interactionPhase: SurfaceTileInteractionPhase
+): number {
+  if (interactionPhase === "interacting") {
+    return Math.max(
+      MIN_INTERACTING_REFINEMENT_STEPS,
+      Math.min(MAX_INTERACTING_REFINEMENT_STEPS, frontierBudget * 6)
+    );
+  }
+
+  return Math.max(
+    MIN_IDLE_REFINEMENT_STEPS,
+    Math.min(MAX_IDLE_REFINEMENT_STEPS, frontierBudget * 10)
+  );
 }
 
 function evaluateNode(
   coordinate: TileCoordinate,
   radius: number,
-  tileSize: number,
   cameraPosition: Vector3,
   cameraDistance: number,
   projectionScale: number,
+  levelGeometricErrorByZoom: ReadonlyMap<number, number>,
   tileMetricsCache: Map<string, TileMetrics>
-): { visible: boolean; sse: number } {
+): NodeEvaluation {
   const key = tileCoordinateKey(coordinate);
   let metrics = tileMetricsCache.get(key);
 
   if (!metrics) {
-    metrics = buildTileMetrics(coordinate, radius, tileSize);
+    metrics = buildTileMetrics(coordinate, radius);
     tileMetricsCache.set(key, metrics);
   }
 
@@ -258,16 +322,18 @@ function evaluateNode(
   }
 
   const horizonTest = cameraPosition.dot(metrics.center) + cameraDistance * metrics.sphereRadius;
+  const horizonThreshold = radius * radius - radius * metrics.sphereRadius - HORIZON_EPSILON;
 
-  if (horizonTest < radius * radius - HORIZON_EPSILON) {
+  if (horizonTest < horizonThreshold) {
     return { visible: false, sse: 0 };
   }
 
+  const geometricError = levelGeometricErrorByZoom.get(coordinate.z) ?? 0;
   const distanceToSurface = Math.max(
     MIN_DISTANCE_EPSILON,
     cameraPosition.distanceTo(metrics.center) - metrics.sphereRadius
   );
-  const sse = (metrics.geometricError * projectionScale) / distanceToSurface;
+  const sse = (geometricError * projectionScale) / distanceToSurface;
 
   return {
     visible: true,
@@ -300,7 +366,24 @@ function buildCenterTileByZoom(
   return byZoom;
 }
 
-function selectLeafCoordinates(options: SurfaceTileSelectionOptions, interactionPhase: SurfaceTileInteractionPhase): TileCoordinate[] {
+function rankCandidates(candidates: CandidateNode[]): void {
+  candidates.sort((left, right) => {
+    if (left.sse !== right.sse) {
+      return right.sse - left.sse;
+    }
+
+    if (left.priority !== right.priority) {
+      return right.priority - left.priority;
+    }
+
+    return tileCoordinateKey(left.coordinate).localeCompare(tileCoordinateKey(right.coordinate));
+  });
+}
+
+function selectLeafCoordinates(
+  options: SurfaceTileSelectionOptions,
+  interactionPhase: SurfaceTileInteractionPhase
+): TileCoordinate[] {
   FRUSTUM_MATRIX.multiplyMatrices(options.camera.projectionMatrix, options.camera.matrixWorldInverse);
   FRUSTUM.setFromProjectionMatrix(FRUSTUM_MATRIX);
 
@@ -308,8 +391,20 @@ function selectLeafCoordinates(options: SurfaceTileSelectionOptions, interaction
   const cameraDistance = Math.max(MIN_DISTANCE_EPSILON, cameraPosition.length());
   const projectionScale = options.viewportHeight / (2 * Math.tan((options.camera.fov * Math.PI) / 360));
   const sseThreshold = getSseThreshold(interactionPhase);
-  const leafBudget = getLeafBudget(interactionPhase);
+  const maxFrontierNodes = resolveFrontierBudget(
+    options.viewportWidth,
+    options.viewportHeight,
+    interactionPhase
+  );
+  const maxRefinementSteps = resolveRefinementStepBudget(maxFrontierNodes, interactionPhase);
+  const levelGeometricErrorByZoom = buildLevelGeometricErrorByZoom(
+    options.radius,
+    options.meshMaxSegments,
+    options.minZoom,
+    options.maxZoom
+  );
   const tileMetricsCache = new Map<string, TileMetrics>();
+  const evaluationCache = new Map<string, NodeEvaluation>();
   const centerByZoom = buildCenterTileByZoom(
     cameraPosition,
     options.radius,
@@ -318,36 +413,61 @@ function selectLeafCoordinates(options: SurfaceTileSelectionOptions, interaction
   );
   const leaves = new Map<string, TileCoordinate>();
   const candidates: CandidateNode[] = [];
+  const queuedCandidateKeys = new Set<string>();
+
+  const evaluate = (coordinate: TileCoordinate): NodeEvaluation => {
+    const key = tileCoordinateKey(coordinate);
+    const cached = evaluationCache.get(key);
+
+    if (cached) {
+      return cached;
+    }
+
+    const next = evaluateNode(
+      coordinate,
+      options.radius,
+      cameraPosition,
+      cameraDistance,
+      projectionScale,
+      levelGeometricErrorByZoom,
+      tileMetricsCache
+    );
+    evaluationCache.set(key, next);
+    return next;
+  };
+
+  const enqueueRefinementCandidate = (coordinate: TileCoordinate, evaluation: NodeEvaluation): void => {
+    if (coordinate.z >= options.maxZoom || evaluation.sse <= sseThreshold) {
+      return;
+    }
+
+    const key = tileCoordinateKey(coordinate);
+
+    if (queuedCandidateKeys.has(key)) {
+      return;
+    }
+
+    queuedCandidateKeys.add(key);
+    candidates.push({
+      coordinate,
+      sse: evaluation.sse,
+      priority: computeNodePriority(coordinate, centerByZoom)
+    });
+  };
 
   const minWorldTileCount = 2 ** options.minZoom;
 
   for (let y = 0; y < minWorldTileCount; y += 1) {
     for (let x = 0; x < minWorldTileCount; x += 1) {
       const coordinate = { z: options.minZoom, x, y };
-      const evaluation = evaluateNode(
-        coordinate,
-        options.radius,
-        options.tileSize,
-        cameraPosition,
-        cameraDistance,
-        projectionScale,
-        tileMetricsCache
-      );
+      const evaluation = evaluate(coordinate);
 
       if (!evaluation.visible) {
         continue;
       }
 
-      const key = tileCoordinateKey(coordinate);
-      leaves.set(key, coordinate);
-
-      if (coordinate.z < options.maxZoom && evaluation.sse > sseThreshold) {
-        candidates.push({
-          coordinate,
-          sse: evaluation.sse,
-          priority: computeNodePriority(coordinate, centerByZoom)
-        });
-      }
+      leaves.set(tileCoordinateKey(coordinate), coordinate);
+      enqueueRefinementCandidate(coordinate, evaluation);
     }
   }
 
@@ -361,21 +481,10 @@ function selectLeafCoordinates(options: SurfaceTileSelectionOptions, interaction
     leaves.set(tileCoordinateKey(fallbackCoordinate), fallbackCoordinate);
   }
 
-  let splitSteps = 0;
+  let refinementSteps = 0;
 
-  while (candidates.length > 0 && splitSteps < MAX_SPLIT_STEPS) {
-    candidates.sort((left, right) => {
-      if (left.sse !== right.sse) {
-        return right.sse - left.sse;
-      }
-
-      if (left.priority !== right.priority) {
-        return right.priority - left.priority;
-      }
-
-      return tileCoordinateKey(left.coordinate).localeCompare(tileCoordinateKey(right.coordinate));
-    });
-
+  while (candidates.length > 0 && refinementSteps < maxRefinementSteps) {
+    rankCandidates(candidates);
     const candidate = candidates.shift();
 
     if (!candidate) {
@@ -383,75 +492,49 @@ function selectLeafCoordinates(options: SurfaceTileSelectionOptions, interaction
     }
 
     const parent = candidate.coordinate;
-
-    if (parent.z >= options.maxZoom) {
-      continue;
-    }
-
     const parentKey = tileCoordinateKey(parent);
+    queuedCandidateKeys.delete(parentKey);
 
     if (!leaves.has(parentKey)) {
       continue;
     }
 
-    if (leaves.size + 3 > leafBudget) {
+    if (parent.z >= options.maxZoom) {
       continue;
     }
 
-    const parentEvaluation = evaluateNode(
-      parent,
-      options.radius,
-      options.tileSize,
-      cameraPosition,
-      cameraDistance,
-      projectionScale,
-      tileMetricsCache
-    );
+    const parentEvaluation = evaluate(parent);
 
     if (!parentEvaluation.visible || parentEvaluation.sse <= sseThreshold) {
       continue;
     }
 
-    const visibleChildren: Array<{ coordinate: TileCoordinate; sse: number }> = [];
-
-    for (const child of getChildCoordinates(parent)) {
-      const evaluation = evaluateNode(
-        child,
-        options.radius,
-        options.tileSize,
-        cameraPosition,
-        cameraDistance,
-        projectionScale,
-        tileMetricsCache
-      );
-
-      if (!evaluation.visible) {
-        continue;
-      }
-
-      visibleChildren.push({ coordinate: child, sse: evaluation.sse });
-    }
+    const children = getChildCoordinates(parent);
+    const childEvaluations = children.map((child) => ({
+      coordinate: child,
+      evaluation: evaluate(child)
+    }));
+    const visibleChildren = childEvaluations.filter((item) => item.evaluation.visible);
 
     if (visibleChildren.length === 0) {
       continue;
     }
 
-    leaves.delete(parentKey);
+    const leafDelta = visibleChildren.length - 1;
 
-    for (const child of visibleChildren) {
-      const childKey = tileCoordinateKey(child.coordinate);
-      leaves.set(childKey, child.coordinate);
-
-      if (child.coordinate.z < options.maxZoom && child.sse > sseThreshold) {
-        candidates.push({
-          coordinate: child.coordinate,
-          sse: child.sse,
-          priority: computeNodePriority(child.coordinate, centerByZoom)
-        });
-      }
+    if (leaves.size + leafDelta > maxFrontierNodes) {
+      continue;
     }
 
-    splitSteps += 1;
+    leaves.delete(parentKey);
+
+    for (const item of visibleChildren) {
+      const childKey = tileCoordinateKey(item.coordinate);
+      leaves.set(childKey, item.coordinate);
+      enqueueRefinementCandidate(item.coordinate, item.evaluation);
+    }
+
+    refinementSteps += 1;
   }
 
   return uniqueSortedCoordinates([...leaves.values()]);
