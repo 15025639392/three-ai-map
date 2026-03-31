@@ -35,6 +35,7 @@ export interface TileNodePlan {
   priority: number;
   wantedState: TileNodeWantedState;
   interactionPhase: SurfaceTileInteractionPhase;
+  morphFactor: number;
 }
 
 export interface SurfaceTilePlan {
@@ -374,7 +375,8 @@ export function planSurfaceTileNodes(
     // This planner currently emits the visible frontier only. Parent fallback stays runtime state
     // on consuming layers and is reachable through parentKey instead of extra parent plan nodes.
     wantedState: "leaf",
-    interactionPhase
+    interactionPhase,
+    morphFactor: 1
   })));
 
   return {

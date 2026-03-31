@@ -56,6 +56,7 @@ interface RecoveryStageStats {
 const SURFACE_TILE_PLAN_TILE_SIZE = 256;
 const SURFACE_TILE_PLAN_MIN_ZOOM = 1;
 const SURFACE_TILE_PLAN_MAX_ZOOM = 18;
+const SURFACE_TILE_NODE_MORPH_DURATION_MS = 220;
 const INTERACTION_IDLE_DELAY_MS = 180;
 
 export class GlobeEngine {
@@ -95,6 +96,7 @@ export class GlobeEngine {
   private lastRenderTimestamp: number | null = null;
   private surfaceTileInteractionPhase: SurfaceTileInteractionPhase = "idle";
   private currentSurfaceTilePlan: SurfaceTilePlan | null = null;
+  private readonly surfaceTileNodeMorphStartTimes = new Map<string, number>();
 
   constructor({
     container,
@@ -217,7 +219,7 @@ export class GlobeEngine {
     this.interactionAnchorOverlay?.update(this.cameraController.getInteractionDebugState());
     this.sceneSystem.camera.updateMatrixWorld(true);
     this.currentSurfaceTilePlan = this.buildSurfaceTilePlan();
-    this.layerManager.update(0);
+    this.layerManager.update(deltaTime);
     this.rendererSystem.render(this.sceneSystem.scene, this.sceneSystem.camera);
     this.renderCount += 1;
     this.performanceMonitor.update(deltaTime);
@@ -584,7 +586,8 @@ export class GlobeEngine {
       this.rendererSystem.renderer.domElement.height ||
       1;
 
-    return planSurfaceTileNodes({
+    const now = performance.now();
+    const plan = planSurfaceTileNodes({
       camera: this.sceneSystem.camera,
       viewportWidth,
       viewportHeight,
@@ -594,6 +597,35 @@ export class GlobeEngine {
       maxZoom: plannerConfig?.maxZoom ?? SURFACE_TILE_PLAN_MAX_ZOOM,
       interactionPhase: this.surfaceTileInteractionPhase
     });
+    const activeKeys = new Set(plan.nodes.map((node) => node.key));
+
+    for (const key of this.surfaceTileNodeMorphStartTimes.keys()) {
+      if (!activeKeys.has(key)) {
+        this.surfaceTileNodeMorphStartTimes.delete(key);
+      }
+    }
+
+    const nodes = plan.nodes.map((node) => {
+      const existingStartTime = this.surfaceTileNodeMorphStartTimes.get(node.key);
+      const startTime = existingStartTime ?? now;
+
+      if (existingStartTime === undefined) {
+        this.surfaceTileNodeMorphStartTimes.set(node.key, startTime);
+      }
+
+      const elapsed = Math.max(0, now - startTime);
+      const morphFactor = Math.min(1, elapsed / SURFACE_TILE_NODE_MORPH_DURATION_MS);
+
+      return {
+        ...node,
+        morphFactor
+      };
+    });
+
+    return {
+      ...plan,
+      nodes
+    };
   }
 
   private getSurfaceTilePlan(): SurfaceTilePlan {

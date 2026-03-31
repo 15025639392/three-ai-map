@@ -4,7 +4,7 @@
 
 **Goal:** 把当前 `terrain host + imagery overlay` 模式升级为 terrain / imagery 共用同一套 quadtree LOD，并支持 parent fallback 过渡。
 
-**Architecture:** 在 `src/tiles` 新增 shared surface tile planner，由引擎每帧产出统一节点计划；`TerrainTileLayer` 与 `RasterLayer` 都只消费这份计划，不再各自做独立 LOD 选择。渲染上保留父节点直到子节点 geometry / imagery 可用；一期先完成 shared planner + parent fallback，二期再补 `geomorph / crossfade`。
+**Architecture:** 在 `src/tiles` 新增 shared surface tile planner，由引擎每帧产出统一节点计划；`TerrainTileLayer` 与 `RasterLayer` 都只消费这份计划，不再各自做独立 LOD 选择。渲染上保留父节点直到子节点 geometry / imagery 可用；一期完成 shared planner + parent fallback，二期补齐 `geomorph / crossfade`。
 
 **Tech Stack:** TypeScript、Three.js、Vitest、现有 deterministic browser smoke
 
@@ -13,6 +13,17 @@
 - 一期 6 个任务已经完成，shared quadtree / parent fallback 已按计划落地。
 - 已通过的定向验证：`npm run typecheck`
 - 已通过的定向验证：`npx vitest run tests/tiles/SurfaceTilePlanner.test.ts tests/layers/TerrainTileLayerInteraction.test.ts tests/layers/RasterLayer.test.ts tests/engine/GlobeEngine.test.ts`
+- 已通过的定向验证：`GAODE_PAN_TARGET_ZOOM=18 npm run test:browser:gaode-pan`
+- 已通过的定向验证：`npm run test:browser:camera-interaction`
+
+## 二期执行状态（2026-03-31）
+
+- 已完成：`GlobeEngine` 为 shared quadtree 节点下发按时间推进的 `morphFactor`。
+- 已完成：`TerrainTileLayer` 接入基于 parent surface 的几何 morph，替代原有硬切换。
+- 已完成：`RasterLayer` 接入 parent-child crossfade（旧 mesh 淡出、新 mesh 淡入）。
+- 已完成：删除 `RasterLayer` 非 shared-plan 请求规划分支，保留单一 shared quadtree 路径。
+- 已通过的定向验证：`npm run typecheck`
+- 已通过的定向验证：`npm run build`
 - 已通过的定向验证：`GAODE_PAN_TARGET_ZOOM=18 npm run test:browser:gaode-pan`
 - 已通过的定向验证：`npm run test:browser:camera-interaction`
 
@@ -231,7 +242,7 @@ Expected: PASS
   - 浏览器回归配对项实际使用仓库已有的 `npm run test:browser:camera-interaction`
   - `GAODE_PAN_TARGET_ZOOM=18` 在 demo smoke 中最终受 terrain planner `maxZoom=14` 限制，但仍能稳定证明 shared plan 对齐以及 parent fallback -> leaf refine 的切换
   - smoke harness 通过 `Reflect` 读取私有 engine/layer internals 做调试取证
-- 记录 deferred 的二期项：`geomorph`、parent-child crossfade
+- 二期项已落地：`geomorph`、parent-child crossfade
 
 **Step 5: 提交**
 

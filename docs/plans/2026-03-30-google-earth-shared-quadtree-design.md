@@ -76,11 +76,11 @@
   - 不抖动
   - 子节点 ready 后再替换父节点
 
-## 二期：Geomorph / Crossfade（deferred）
+## 二期：Geomorph / Crossfade
 
 - 给 shared quadtree 节点补 `morphFactor`
-- terrain 父子节点在重叠期间做 edge morph / crack suppression
-- imagery 在父子替换时做短时 crossfade
+- terrain 子节点从 parent surface 几何连续过渡到目标几何（保留 skirts 抑制裂缝）
+- imagery 在父子替换时做短时 crossfade（旧节点淡出、新节点淡入）
 
 ## 一期非目标
 
@@ -107,7 +107,13 @@
 - 实际落地差异：`GAODE_PAN_TARGET_ZOOM=18` 的 smoke 目标会被 terrain planner `maxZoom=14` clamp，但仍能稳定证明 shared planner 对齐和 parent fallback/refine 行为
 - 实际落地差异：demo smoke harness 通过 `Reflect` 访问私有 engine/layer internals，仅用于调试与取证
 
-## 二期保留项
+## 二期落地状态（2026-03-31）
 
-- `geomorph`
-- parent-child crossfade
+- 已完成：`GlobeEngine` 对 shared plan 节点按时间推进 `morphFactor`，并把该因子随 plan 下发给 layer。
+- 已完成：`TerrainTileLayer` 基于 parent mesh 采样建立 geomorph 基态，显示子节点时按 `morphFactor` 连续插值到目标地形，避免硬切换。
+- 已完成：`RasterLayer` 在 parent->child 切换时保留旧 mesh 做淡出，新 mesh 淡入，补齐 parent-child crossfade。
+- 已完成：移除 `RasterLayer` 的非 shared-plan 旧规划路径，仅保留 shared quadtree 请求计划。
+- 已通过的定向验证：`npm run typecheck`
+- 已通过的定向验证：`npm run build`
+- 已通过的定向验证：`GAODE_PAN_TARGET_ZOOM=18 npm run test:browser:gaode-pan`
+- 已通过的定向验证：`npm run test:browser:camera-interaction`
