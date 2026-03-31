@@ -149,6 +149,7 @@ const demos = [
 const standalonePages = [
   "camera-pinch-regression",
   "raster-layer-imagery-zoom-regression",
+  "raster-layer-ellipsoid-host-regression",
 ];
 
 export default defineConfig({

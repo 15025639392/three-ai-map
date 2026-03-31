@@ -242,6 +242,22 @@ function getRasterLayer(engine: GlobeEngine): RasterLayer {
   return raster;
 }
 
+function getRasterSourceMaxZoom(engine: GlobeEngine, sourceId: string): number {
+  const source = getSourceManager(engine).get(sourceId);
+
+  if (!source || typeof source !== "object") {
+    throw new Error(`Missing raster source: ${sourceId}`);
+  }
+
+  const maxZoom = Reflect.get(source, "maxZoom");
+
+  if (typeof maxZoom !== "number" || !Number.isFinite(maxZoom)) {
+    throw new Error(`Invalid raster source maxZoom: ${sourceId}`);
+  }
+
+  return maxZoom;
+}
+
 function getTerrainEntries(terrain: TerrainTileLayer): Map<string, TerrainTileDebugEntry> {
   const entries = Reflect.get(terrain as object, "activeTiles");
 
@@ -344,12 +360,15 @@ async function runDragPanSmoke(
   targetZoom: number
 ): Promise<void> {
   const terrain = getTerrainLayer(engine);
+  const rasterSourceMaxZoom = getRasterSourceMaxZoom(engine, "gaode-satellite");
   const terrainPlannerMaxZoom = terrain.getSurfaceTilePlannerConfig().maxZoom;
   const expectedSharedTargetZoom = Math.min(targetZoom, terrainPlannerMaxZoom);
+  const expectedRasterTargetZoom = Math.min(targetZoom, rasterSourceMaxZoom);
 
   stage.dataset.phase = "seeking-initial";
   stage.dataset.requestedTargetZoom = `${targetZoom}`;
   stage.dataset.terrainPlannerMaxZoom = `${terrainPlannerMaxZoom}`;
+  stage.dataset.rasterSourceMaxZoom = `${rasterSourceMaxZoom}`;
   status.textContent = `启动中:gaode-pan-smoke:initial:z${targetZoom}`;
 
   engine.setView({
@@ -371,7 +390,7 @@ async function runDragPanSmoke(
     }
   );
 
-  applySmokeLoadDelay(engine, expectedSharedTargetZoom);
+  applySmokeLoadDelay(engine, expectedRasterTargetZoom);
 
   engine.setView({
     lng: 104.07,
@@ -393,8 +412,8 @@ async function runDragPanSmoke(
       hasExpectedFrontier(snapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
       hasParentZoom(snapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
       sameZooms(snapshot.terrainDisplayZooms, snapshot.rasterHostZooms) &&
-      snapshot.rasterRequestedZooms.includes(expectedSharedTargetZoom) &&
-      hasParentZoom(snapshot.rasterRequestedZooms, expectedSharedTargetZoom),
+      snapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom) &&
+      hasParentZoom(snapshot.rasterRequestedZooms, expectedRasterTargetZoom),
     MAX_SMOKE_WAIT_MS,
     (snapshot) => {
       writeSnapshot(stage, "current", snapshot);
@@ -416,7 +435,7 @@ async function runDragPanSmoke(
       snapshot.terrainParentFallbackCount === 0 &&
       sameZooms(snapshot.terrainDisplayZooms, snapshot.sharedLeafZooms) &&
       sameZooms(snapshot.terrainDisplayZooms, snapshot.rasterHostZooms) &&
-      sameZooms(snapshot.rasterRequestedZooms, snapshot.terrainDisplayZooms),
+      snapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom),
     MAX_SMOKE_WAIT_MS,
     (snapshot) => {
       writeSnapshot(stage, "current", snapshot);
@@ -430,14 +449,14 @@ async function runDragPanSmoke(
     hasExpectedFrontier(interactingSnapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
     hasParentZoom(interactingSnapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
     sameZooms(interactingSnapshot.terrainDisplayZooms, interactingSnapshot.rasterHostZooms) &&
-    interactingSnapshot.rasterRequestedZooms.includes(expectedSharedTargetZoom) &&
-    hasParentZoom(interactingSnapshot.rasterRequestedZooms, expectedSharedTargetZoom) &&
+    interactingSnapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom) &&
+    hasParentZoom(interactingSnapshot.rasterRequestedZooms, expectedRasterTargetZoom) &&
     idleSnapshot.sharedTargetZoom === expectedSharedTargetZoom &&
     hasExpectedFrontier(idleSnapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
     idleSnapshot.terrainParentFallbackCount === 0 &&
     sameZooms(idleSnapshot.terrainDisplayZooms, idleSnapshot.sharedLeafZooms) &&
     sameZooms(idleSnapshot.terrainDisplayZooms, idleSnapshot.rasterHostZooms) &&
-    sameZooms(idleSnapshot.rasterRequestedZooms, idleSnapshot.terrainDisplayZooms);
+    idleSnapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom);
 
   stage.dataset.phase = "after-idle";
   stage.dataset.allExpected = `${allExpected}`;

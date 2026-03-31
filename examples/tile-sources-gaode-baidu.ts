@@ -82,8 +82,8 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
       cache: 128,
       extraBounds: [] // Disable DEM outside configured bounds (Gaode imagery only).
     },
-    maxMeshSegments: 16,
-    minMeshSegments: 16,
+    maxMeshSegments: 3,
+    minMeshSegments: 1,
     concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
     skirtDepthMeters: 500,
@@ -99,14 +99,14 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
   engine.addSource("gaode-satellite", imagerySource);
   const imageryLayer = new RasterLayer({ id: "gaode-satellite", source: "gaode-satellite", zIndex: 100 });
 
-  engine.addLayer(terrain);
+  // engine.addLayer(terrain);
   engine.addLayer(imageryLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 }); // center of China
 
-  terrain.ready().then(
-    () => { if (output) output.textContent = "Gaode satellite tiles loaded"; },
-    () => { if (output) output.textContent = "Gaode satellite tiles failed – check network"; },
-  );
+  // terrain.ready().then(
+  //   () => { if (output) output.textContent = "Gaode satellite tiles loaded"; },
+  //   () => { if (output) output.textContent = "Gaode satellite tiles failed – check network"; },
+  // );
 
   if (output) output.textContent = "正在加载高德卫星...";
 

@@ -75,6 +75,7 @@ function assertDom(dom) {
   const phase = getAttr(dom, "phase");
   const requestedTargetZoom = Number(getAttr(dom, "requested-target-zoom") ?? "NaN");
   const terrainPlannerMaxZoom = Number(getAttr(dom, "terrain-planner-max-zoom") ?? "NaN");
+  const rasterSourceMaxZoom = Number(getAttr(dom, "raster-source-max-zoom") ?? "NaN");
   const interactingSharedTargetZoom = Number(getAttr(dom, "interacting-shared-target-zoom") ?? "NaN");
   const idleSharedTargetZoom = Number(getAttr(dom, "idle-shared-target-zoom") ?? "NaN");
   const interactingTerrainParentFallbackCount = Number(
@@ -106,8 +107,12 @@ function assertDom(dom) {
   if (!Number.isFinite(terrainPlannerMaxZoom)) {
     throw new Error("Expected finite terrain planner max zoom");
   }
+  if (!Number.isFinite(rasterSourceMaxZoom)) {
+    throw new Error("Expected finite raster source max zoom");
+  }
 
   const expectedSharedTargetZoom = Math.min(requestedTargetZoom, terrainPlannerMaxZoom);
+  const expectedRasterTargetZoom = Math.min(requestedTargetZoom, rasterSourceMaxZoom);
 
   if (interactingSharedTargetZoom !== expectedSharedTargetZoom) {
     throw new Error(
@@ -162,21 +167,21 @@ function assertDom(dom) {
     );
   }
 
-  if (!interactingRasterRequestedZooms.includes(expectedSharedTargetZoom)) {
+  if (!interactingRasterRequestedZooms.includes(expectedRasterTargetZoom)) {
     throw new Error(
-      `Expected interacting raster requested zooms to include ${expectedSharedTargetZoom}, got [${interactingRasterRequestedZooms.join(",")}]`
+      `Expected interacting raster requested zooms to include ${expectedRasterTargetZoom}, got [${interactingRasterRequestedZooms.join(",")}]`
     );
   }
 
-  if (!interactingRasterRequestedZooms.some((zoom) => zoom < expectedSharedTargetZoom)) {
+  if (!interactingRasterRequestedZooms.some((zoom) => zoom < expectedRasterTargetZoom)) {
     throw new Error(
-      `Expected interacting raster requested zooms to include a parent fallback below ${expectedSharedTargetZoom}, got [${interactingRasterRequestedZooms.join(",")}]`
+      `Expected interacting raster requested zooms to include a parent fallback below ${expectedRasterTargetZoom}, got [${interactingRasterRequestedZooms.join(",")}]`
     );
   }
 
-  if (!sameZooms(idleRasterRequestedZooms, idleTerrainDisplayZooms)) {
+  if (!idleRasterRequestedZooms.includes(expectedRasterTargetZoom)) {
     throw new Error(
-      `Expected idle raster requested zooms [${idleTerrainDisplayZooms.join(",")}] to match terrain display zooms, got [${idleRasterRequestedZooms.join(",")}]`
+      `Expected idle raster requested zooms to include ${expectedRasterTargetZoom}, got [${idleRasterRequestedZooms.join(",")}]`
     );
   }
 

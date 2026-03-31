@@ -13,8 +13,8 @@ import {
 import { cartographicToCartesian } from "../geo/projection";
 import { RasterTileSource } from "../sources/RasterTileSource";
 import { TileRequestCancelledError } from "../tiles/TileScheduler";
-import { type TileCoordinate } from "../tiles/TileViewport";
-import type { SurfaceTilePlan } from "../tiles/SurfaceTilePlanner";
+import { computeTargetZoom, type TileCoordinate } from "../tiles/TileViewport";
+import { planSurfaceTileNodes, type SurfaceTileInteractionPhase } from "../tiles/SurfaceTilePlanner";
 import type { TileSource } from "../tiles/tileLoader";
 import { getSurfaceTileBounds } from "../tiles/SurfaceTileTree";
 import { Layer, LayerContext } from "./Layer";
@@ -202,6 +202,8 @@ const RASTER_CROSSFADE_EPSILON = 1e-4;
 const POLAR_CAP_SEGMENTS = 10;
 const MAX_INTERACTING_DETAIL_REQUESTS_PER_HOST = 16;
 const MAX_IDLE_DETAIL_REQUESTS_PER_HOST = 48;
+const RASTER_IMAGERY_PLAN_MESH_SEGMENTS = 16;
+const RASTER_ELLIPSOID_MESH_SEGMENTS = 16;
 
 const CAP_P0 = new Vector3();
 const CAP_P1 = new Vector3();
@@ -211,6 +213,24 @@ const CAP_C = new Vector3();
 
 function tileCoordinateKey(coordinate: TileCoordinate): string {
   return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
+}
+
+function sortCoordinates(coordinates: TileCoordinate[]): TileCoordinate[] {
+  return coordinates.sort((left, right) => {
+    if (left.z !== right.z) {
+      return left.z - right.z;
+    }
+    if (left.y !== right.y) {
+      return left.y - right.y;
+    }
+    return left.x - right.x;
+  });
+}
+
+function uniqueSortedCoordinates(coordinates: TileCoordinate[]): TileCoordinate[] {
+  return sortCoordinates([...new Map(
+    coordinates.map((coordinate) => [tileCoordinateKey(coordinate), coordinate])
+  ).values()]);
 }
 
 interface UvBounds {
@@ -325,6 +345,50 @@ function buildPolarCapGeometry(
 
   for (let segment = 0; segment < POLAR_CAP_SEGMENTS; segment += 1) {
     appendOrientedTriangle(indices, positions, segment, segment + 1, poleIndex);
+  }
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function buildEllipsoidTileGeometry(
+  coordinate: TileCoordinate,
+  radius: number,
+  meshSegments: number
+): BufferGeometry {
+  const { west, east, south, north } = getSurfaceTileBounds(coordinate);
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let row = 0; row <= meshSegments; row += 1) {
+    const v = row / meshSegments;
+    const lat = north + (south - north) * v;
+
+    for (let column = 0; column <= meshSegments; column += 1) {
+      const u = column / meshSegments;
+      const lng = west + (east - west) * u;
+      const cartesian = cartographicToCartesian({ lng, lat, height: 0 }, radius);
+      positions.push(cartesian.x, cartesian.y, cartesian.z);
+      uvs.push(u, 1 - v);
+    }
+  }
+
+  const rowSize = meshSegments + 1;
+
+  for (let row = 0; row < meshSegments; row += 1) {
+    for (let column = 0; column < meshSegments; column += 1) {
+      const topLeft = row * rowSize + column;
+      const topRight = topLeft + 1;
+      const bottomLeft = topLeft + rowSize;
+      const bottomRight = bottomLeft + 1;
+      indices.push(topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight);
+    }
   }
 
   const geometry = new BufferGeometry();
@@ -597,7 +661,7 @@ function dedupeRasterRequests(requests: RasterTileRequest[]): RasterTileRequest[
 function resolveDetailRequestBudget(
   hostCoordinate: TileCoordinate,
   imageryZoom: number,
-  interactionPhase: SurfaceTilePlan["interactionPhase"]
+  interactionPhase: SurfaceTileInteractionPhase
 ): number {
   const zoomDelta = Math.max(0, imageryZoom - hostCoordinate.z);
   const theoreticalCoverageCount = Math.max(1, 2 ** (zoomDelta * 2));
@@ -616,26 +680,25 @@ function resolveDetailRequestBudget(
 }
 
 
-function createSharedRasterTilePlans(
+function createRasterTilePlans(
   source: RasterTileSource,
   hostCoordinates: TileCoordinate[],
-  sharedPlan: SurfaceTilePlan
+  detailCoordinates: TileCoordinate[],
+  centerCoordinate: TileCoordinate,
+  interactionPhase: SurfaceTileInteractionPhase
 ): RasterTilePlan[] {
-  const sharedNodesByKey = new Map(sharedPlan.nodes.map((node) => [node.key, node] as const));
-
   return hostCoordinates.flatMap((hostCoordinate) => {
     const hostKey = tileCoordinateKey(hostCoordinate);
-    const matchingSharedCoordinates = sharedPlan.nodes
-      .map((node) => node.coordinate)
-      .filter((coordinate) => isCoordinateWithinHost(coordinate, hostCoordinate));
+    const matchingDetailCoordinates = detailCoordinates.filter((coordinate) =>
+      isCoordinateWithinHost(coordinate, hostCoordinate)
+    );
 
-    if (matchingSharedCoordinates.length === 0) {
-      return [];
-    }
-
-    const fallbackZoom = Math.max(source.minZoom, Math.min(source.maxZoom, hostCoordinate.z));
-    const detailCoordinates = [...new Map(
-      matchingSharedCoordinates.map((coordinate) => {
+    const fallbackZoom = Math.max(
+      source.minZoom,
+      Math.min(source.maxZoom, hostCoordinate.z)
+    );
+    const scaledDetailCoordinates = [...new Map(
+      matchingDetailCoordinates.map((coordinate) => {
         const clampedZoom = Math.max(
           source.minZoom,
           Math.min(source.maxZoom, coordinate.z)
@@ -649,24 +712,24 @@ function createSharedRasterTilePlans(
     ).values()];
     const imageryZoom = Math.max(
       fallbackZoom,
-      ...detailCoordinates.map((coordinate) => coordinate.z)
+      ...scaledDetailCoordinates.map((coordinate) => coordinate.z)
     );
     const textureSize = resolveTextureSize(hostCoordinate, imageryZoom, source.tileSize);
     const baseRequests = createCoverageRequests(
       hostCoordinate,
       fallbackZoom,
       textureSize,
-      scaleCoordinateToZoom(sharedPlan.centerCoordinate, fallbackZoom),
+      scaleCoordinateToZoom(centerCoordinate, fallbackZoom),
       "fallback"
     );
     const baseRequestSignatures = new Set(baseRequests.map((request) => getRasterRequestSignature(request)));
     const detailRequestCandidates = sortRequestsByPriority(
-      dedupeRasterRequests(detailCoordinates.flatMap((coordinate) => {
+      dedupeRasterRequests(scaledDetailCoordinates.flatMap((coordinate) => {
         const request = createRequestForCoordinate(
           hostCoordinate,
           coordinate,
           textureSize,
-          scaleCoordinateToZoom(sharedPlan.centerCoordinate, coordinate.z),
+          scaleCoordinateToZoom(centerCoordinate, coordinate.z),
           "detail"
         );
 
@@ -680,7 +743,7 @@ function createSharedRasterTilePlans(
     const detailRequestBudget = resolveDetailRequestBudget(
       hostCoordinate,
       imageryZoom,
-      sharedPlan.interactionPhase
+      interactionPhase
     );
     const detailRequests = detailRequestCandidates.slice(0, detailRequestBudget);
     const requestKey = [
@@ -695,10 +758,7 @@ function createSharedRasterTilePlans(
       imageryZoom,
       textureSize,
       requestKey,
-      morphFactor: Math.max(
-        0,
-        Math.min(1, sharedNodesByKey.get(hostKey)?.morphFactor ?? 1)
-      ),
+      morphFactor: 1,
       baseRequests,
       detailRequests,
       requestedImageryTileKeys: [...new Set(
@@ -803,13 +863,6 @@ export class RasterLayer extends Layer {
   }
 
   private syncTiles(context: LayerContext): void {
-    const host = context.getTerrainHost?.();
-
-    if (!host) {
-      this.clearActiveTiles();
-      return;
-    }
-
     const source = context.getSource?.(this.sourceId);
 
     if (!(source instanceof RasterTileSource)) {
@@ -817,16 +870,49 @@ export class RasterLayer extends Layer {
       return;
     }
 
-    const hostKeys = host.getActiveTileKeys();
-    const hostCoordinates = hostKeys.map((key) => parseTileKey(key));
-    const sharedPlan = context.getSurfaceTilePlan?.();
+    const viewportWidth =
+      context.rendererElement?.clientWidth ||
+      context.rendererElement?.width ||
+      1;
+    const viewportHeight =
+      context.rendererElement?.clientHeight ||
+      context.rendererElement?.height ||
+      1;
+    const imageryTargetZoom = computeTargetZoom({
+      camera: context.camera,
+      viewportWidth,
+      viewportHeight,
+      radius: context.radius,
+      tileSize: source.tileSize,
+      minZoom: source.minZoom,
+      maxZoom: source.maxZoom
+    });
+    const interactionPhase = context.getSurfaceTilePlan?.().interactionPhase ?? "idle";
 
-    if (!sharedPlan) {
-      this.clearActiveTiles();
-      return;
-    }
-
-    const desiredPlans = createSharedRasterTilePlans(source, hostCoordinates, sharedPlan);
+    const imageryPlan = planSurfaceTileNodes({
+      camera: context.camera,
+      viewportWidth,
+      viewportHeight,
+      radius: context.radius,
+      meshMaxSegments: RASTER_IMAGERY_PLAN_MESH_SEGMENTS,
+      minZoom: source.minZoom,
+      maxZoom: imageryTargetZoom,
+      interactionPhase
+    });
+    const detailCoordinates = uniqueSortedCoordinates(
+      imageryPlan.nodes.map((node) => node.coordinate)
+    );
+    const host = context.getTerrainHost?.();
+    const hostCoordinates = host
+      ? host.getActiveTileKeys().map((key) => parseTileKey(key))
+      : detailCoordinates;
+    const desiredPlans = createRasterTilePlans(
+      source,
+      uniqueSortedCoordinates(hostCoordinates),
+      detailCoordinates,
+      imageryPlan.centerCoordinate,
+      imageryPlan.interactionPhase
+    );
     const desiredEntries = new Map(
       desiredPlans.map((plan) => [plan.hostTileKey, plan] as const)
     );
@@ -838,7 +924,7 @@ export class RasterLayer extends Layer {
     }
 
     for (const plan of desiredEntries.values()) {
-      if (!host.getActiveTileMesh(plan.hostTileKey)) {
+      if (host && !host.getActiveTileMesh(plan.hostTileKey)) {
         continue;
       }
 
@@ -1029,16 +1115,14 @@ export class RasterLayer extends Layer {
     }
 
     const host = context.getTerrainHost?.();
-
-    if (!host) {
-      throw new Error("RasterLayer requires a TerrainTileLayer host");
-    }
-
-    const hostMesh = host.getActiveTileMesh(plan.hostTileKey);
-
-    if (!hostMesh) {
+    const hostMesh = host?.getActiveTileMesh(plan.hostTileKey) ?? null;
+    if (host && !hostMesh) {
       throw new Error(`RasterLayer missing host mesh for tile ${plan.hostTileKey}`);
     }
+    const hostCoordinate = parseTileKey(plan.hostTileKey);
+    const hostGeometry = hostMesh
+      ? hostMesh.geometry.clone()
+      : buildEllipsoidTileGeometry(hostCoordinate, context.radius, RASTER_ELLIPSOID_MESH_SEGMENTS);
 
     const source = context.getSource?.(this.sourceId);
 
@@ -1070,7 +1154,13 @@ export class RasterLayer extends Layer {
     }
 
     if (plan.requiresCompositing) {
-      const surface = this.createCompositedMesh(hostMesh, plan, baseTiles, context.radius);
+      const surface = this.createCompositedMesh(
+        hostGeometry,
+        hostCoordinate,
+        plan,
+        baseTiles,
+        context.radius
+      );
 
       if (!isCurrent()) {
         this.disposeRasterMesh(surface.mesh);
@@ -1083,7 +1173,13 @@ export class RasterLayer extends Layer {
       return;
     }
 
-    const mesh = this.createDirectMesh(hostMesh, plan, baseTiles[0].source, context.radius);
+    const mesh = this.createDirectMesh(
+      hostGeometry,
+      hostCoordinate,
+      plan,
+      baseTiles[0].source,
+      context.radius
+    );
 
     if (!isCurrent()) {
       this.disposeRasterMesh(mesh);
@@ -1095,23 +1191,25 @@ export class RasterLayer extends Layer {
   }
 
   private createDirectMesh(
-    hostMesh: Mesh<BufferGeometry, MeshStandardMaterial>,
+    hostGeometry: BufferGeometry,
+    hostCoordinate: TileCoordinate,
     plan: RasterTilePlan,
     source: TileSource,
     radius: number
   ): Mesh<BufferGeometry, MeshStandardMaterial> {
     const texture = createTexture(source);
     const material = this.createMaterial(texture);
-    const mesh = new Mesh(hostMesh.geometry.clone(), material);
+    const mesh = new Mesh(hostGeometry, material);
     mesh.name = `${this.id}:${plan.hostTileKey}:z${plan.imageryZoom}`;
     const zBucket = Math.max(0, this.zIndex ?? this.addOrder);
     mesh.renderOrder = RASTER_BASE + zBucket * ZINDEX_STRIDE + this.addOrder;
-    this.attachPolarCapMesh(mesh, parseTileKey(plan.hostTileKey), radius);
+    this.attachPolarCapMesh(mesh, hostCoordinate, radius);
     return mesh;
   }
 
   private createCompositedMesh(
-    hostMesh: Mesh<BufferGeometry, MeshStandardMaterial>,
+    hostGeometry: BufferGeometry,
+    hostCoordinate: TileCoordinate,
     plan: RasterTilePlan,
     tiles: LoadedRasterTile[],
     radius: number
@@ -1136,11 +1234,11 @@ export class RasterLayer extends Layer {
 
     const texture = createTexture(canvas);
     const material = this.createMaterial(texture);
-    const mesh = new Mesh(hostMesh.geometry.clone(), material);
+    const mesh = new Mesh(hostGeometry, material);
     mesh.name = `${this.id}:${plan.hostTileKey}:z${plan.imageryZoom}`;
     const zBucket = Math.max(0, this.zIndex ?? this.addOrder);
     mesh.renderOrder = RASTER_BASE + zBucket * ZINDEX_STRIDE + this.addOrder;
-    this.attachPolarCapMesh(mesh, parseTileKey(plan.hostTileKey), radius);
+    this.attachPolarCapMesh(mesh, hostCoordinate, radius);
 
     return {
       mesh,
