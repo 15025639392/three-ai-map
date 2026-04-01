@@ -136,22 +136,32 @@ function getSourceManager(engine: GlobeEngine): {
 }
 
 function getSurfaceTilePlan(engine: GlobeEngine): SurfaceTilePlanSnapshot {
-  const getter = Reflect.get(engine as object, "getSurfaceTilePlan");
+  const surfaceSystem = getSurfaceSystem(engine);
+  const getter = Reflect.get(surfaceSystem as object, "getSurfaceTilePlan");
 
   if (typeof getter !== "function") {
-    throw new Error("Missing GlobeEngine surface tile plan getter");
+    throw new Error("Missing SurfaceSystem surface tile plan getter");
   }
 
-  return (getter as () => SurfaceTilePlanSnapshot).call(engine);
+  return (getter as () => SurfaceTilePlanSnapshot).call(surfaceSystem);
+}
+
+function getSurfaceSystem(engine: GlobeEngine): {
+  notifyCameraChanged(programmatic?: boolean): void;
+} {
+  const surfaceSystem = Reflect.get(engine as object, "surfaceSystem");
+
+  if (!surfaceSystem || typeof surfaceSystem !== "object") {
+    throw new Error("Missing GlobeEngine surface system");
+  }
+
+  return surfaceSystem as {
+    notifyCameraChanged(programmatic?: boolean): void;
+  };
 }
 
 function forceInteractingPhase(engine: GlobeEngine): void {
-  Reflect.set(engine as object, "surfaceTileInteractionPhase", "interacting");
-  const scheduleIdleReset = Reflect.get(engine as object, "scheduleInteractionIdleReset");
-
-  if (typeof scheduleIdleReset === "function") {
-    (scheduleIdleReset as () => void).call(engine);
-  }
+  getSurfaceSystem(engine).notifyCameraChanged(false);
 }
 
 function applySmokeLoadDelay(engine: GlobeEngine, detailZoom: number, delayMs = 220): void {
@@ -335,7 +345,7 @@ async function runDragPanSmoke(
 ): Promise<void> {
   const terrain = getTerrainLayer(engine);
   const rasterSourceMaxZoom = getRasterSourceMaxZoom(engine, "gaode-satellite");
-  const terrainPlannerMaxZoom = terrain.getSurfaceTilePlannerConfig().maxZoom;
+  const terrainPlannerMaxZoom = terrain.getPlannerConfig().maxZoom;
   const expectedSharedTargetZoom = Math.min(targetZoom, terrainPlannerMaxZoom);
   const expectedRasterTargetZoom = Math.min(targetZoom, rasterSourceMaxZoom);
 

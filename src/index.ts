@@ -68,9 +68,6 @@ export {
   bd09ToGcj02
 } from "./spatial/CoordinateTransform";
 
-// Projection
-export { Projection, ProjectionType } from "./projection/Projection";
-
 // Core Systems
 export { AnimationManager } from "./core/Animation";
 export type { Animation, AnimationOptions } from "./core/Animation";
@@ -78,10 +75,10 @@ export { GestureController } from "./core/GestureController";
 export { PerformanceMonitor } from "./core/PerformanceMonitor";
 export type { Metric, PerformanceReport } from "./core/PerformanceMonitor";
 export { PostProcessing } from "./core/PostProcessing";
+export type { SurfaceHost, SurfacePlannerConfig } from "./surface/SurfaceHost";
 
 // Tile Infrastructure
 export { defaultTileLoader, corsTileLoader, type TileSource } from "./tiles/tileLoader";
-export { FrustumCuller } from "./tiles/FrustumCuller";
 export type { LngLatBounds } from "./tiles/LngLatBounds";
 export type { ElevationEncoding } from "./tiles/ElevationEncoding";
 

@@ -12,8 +12,8 @@ import { TileRequestCancelledError } from "../tiles/TileScheduler";
 import {
   getSurfaceTileBounds
 } from "../tiles/SurfaceTileTree";
+import type { SurfaceHost, SurfacePlannerConfig } from "../surface/SurfaceHost";
 import { Layer, LayerContext } from "./Layer";
-import type { SurfaceTilePlannerConfig, TerrainTileHost } from "./TerrainTileHost";
 import type { TileCoordinate } from "../tiles/TileViewport";
 import { TerrainTileSource, type ElevationTileData } from "../sources/TerrainTileSource";
 
@@ -445,7 +445,7 @@ function createTerrainMaterial(): MeshStandardMaterial {
   });
 }
 
-export class TerrainTileLayer extends Layer implements TerrainTileHost {
+export class TerrainTileLayer extends Layer implements SurfaceHost {
   private readonly sourceId: string;
   private readonly minMeshSegments: number;
   private readonly maxMeshSegments: number;
@@ -539,7 +539,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     this.invalidateRender();
   }
 
-  getSurfaceTilePlannerConfig(): SurfaceTilePlannerConfig {
+  getPlannerConfig(): SurfacePlannerConfig {
     const source = this.getTerrainSource();
     return {
       meshMaxSegments: this.maxMeshSegments,

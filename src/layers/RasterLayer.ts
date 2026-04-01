@@ -853,7 +853,7 @@ export class RasterLayer extends Layer {
     const detailCoordinates = uniqueSortedCoordinates(
       imageryPlan.nodes.map((node) => node.coordinate)
     );
-    const host = context.getTerrainHost?.();
+    const host = context.getSurfaceHost?.();
     const hostCoordinates = host
       ? host.getActiveTileKeys().map((key) => parseTileKey(key))
       : detailCoordinates;
@@ -886,7 +886,8 @@ export class RasterLayer extends Layer {
   }
 
   private syncHostGeometryBindings(context: LayerContext): void {
-    const host = context.getTerrainHost?.();
+    // 影像网格始终绑定当前 Surface host 的几何，保证影像/地形在同一宿主瓦片上原子替换。
+    const host = context.getSurfaceHost?.();
 
     if (!host) {
       return;
@@ -1067,7 +1068,7 @@ export class RasterLayer extends Layer {
       throw new Error("RasterLayer missing context");
     }
 
-    const host = context.getTerrainHost?.();
+    const host = context.getSurfaceHost?.();
     const hostMesh = host?.getActiveTileMesh(plan.hostTileKey) ?? null;
     const hostGeometryVersion = host?.getActiveTileGeometryVersion?.(plan.hostTileKey) ?? null;
     if (host && !hostMesh) {
@@ -1270,7 +1271,7 @@ export class RasterLayer extends Layer {
       return;
     }
 
-    const host = context.getTerrainHost?.();
+    const host = context.getSurfaceHost?.();
     const hostMesh = host?.getActiveTileMesh(plan.hostTileKey) ?? null;
 
     if (host && !hostMesh) {

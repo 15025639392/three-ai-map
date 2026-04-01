@@ -1,16 +1,16 @@
 import type { BufferGeometry, Mesh, MeshStandardMaterial } from "three";
 
-export interface SurfaceTilePlannerConfig {
+export interface SurfacePlannerConfig {
   meshMaxSegments: number;
   minZoom: number;
   maxZoom: number;
 }
 
-export interface TerrainTileHost {
+export interface SurfaceHost {
   getActiveTileKeys(): string[];
   getActiveTileMesh(
     key: string
   ): Mesh<BufferGeometry, MeshStandardMaterial> | null;
   getActiveTileGeometryVersion?(key: string): number | null;
-  getSurfaceTilePlannerConfig?(): SurfaceTilePlannerConfig;
+  getPlannerConfig?(): SurfacePlannerConfig;
 }

@@ -1,8 +1,8 @@
 import { Object3D, PerspectiveCamera, Raycaster, type WebGLRenderer } from "three";
 import { Cartesian3Like, Cartographic } from "../geo/cartographic";
 import type { Source } from "../sources/Source";
+import type { SurfaceHost } from "../surface/SurfaceHost";
 import type { SurfaceTilePlan } from "../tiles/SurfaceTilePlanner";
-import type { TerrainTileHost } from "./TerrainTileHost";
 
 export interface LayerErrorPayload {
   source: "layer";
@@ -55,7 +55,7 @@ export interface LayerContext {
   reportError?: (payload: LayerErrorPayload) => void;
   resolveRecovery?: (query: LayerRecoveryQuery) => LayerRecoveryOverrides | undefined;
   getSource?: (id: string) => Source | undefined;
-  getTerrainHost?: () => TerrainTileHost | null;
+  getSurfaceHost?: () => SurfaceHost | null;
   getSurfaceTilePlan?: () => SurfaceTilePlan;
 }
 
