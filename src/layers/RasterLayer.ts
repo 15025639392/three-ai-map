@@ -2,14 +2,14 @@ import {
   BufferAttribute,
   BufferGeometry,
   ClampToEdgeWrapping,
-  CanvasTexture,
   Float32BufferAttribute,
   Group,
   LinearFilter,
   Mesh,
   MeshStandardMaterial,
   Texture,
-  Vector3
+  Vector3,
+  WebGLRenderTarget
 } from "three";
 import { cartographicToCartesian } from "../geo/projection";
 import { RasterTileSource } from "../sources/RasterTileSource";
@@ -19,6 +19,7 @@ import { planSurfaceTileNodes, type SurfaceTileInteractionPhase } from "../tiles
 import type { TileSource } from "../tiles/tileLoader";
 import { getSurfaceTileBounds } from "../tiles/SurfaceTileTree";
 import { Layer, LayerContext } from "./Layer";
+import { RasterGpuComposer } from "./RasterGpuComposer";
 
 export interface RasterLayerOptions {
   id: string;
@@ -39,8 +40,7 @@ interface RasterTileEntry {
   requestKey: string;
   requestedImageryTileKeys: string[];
   version: number;
-  composedCanvas: HTMLCanvasElement | null;
-  composedContext: CanvasRenderingContext2D | null;
+  composedTarget: WebGLRenderTarget | null;
 }
 
 interface SourceCropRegion {
@@ -112,9 +112,7 @@ class RasterTileLoadError extends Error {
 }
 
 function createTexture(source: TileSource): Texture {
-  const texture = source instanceof HTMLCanvasElement
-    ? new CanvasTexture(source)
-    : new Texture(source as Exclude<TileSource, HTMLCanvasElement>);
+  const texture = new Texture(source);
   texture.wrapS = ClampToEdgeWrapping;
   texture.wrapT = ClampToEdgeWrapping;
   texture.generateMipmaps = false;
@@ -443,20 +441,6 @@ function isCoordinateWithinHost(
   );
 }
 
-function getTileSourceSize(source: TileSource): { width: number; height: number } {
-  if (source instanceof HTMLImageElement) {
-    return {
-      width: source.naturalWidth || source.width,
-      height: source.naturalHeight || source.height
-    };
-  }
-
-  return {
-    width: source.width,
-    height: source.height
-  };
-}
-
 function resolveTextureSize(hostCoordinate: TileCoordinate, imageryZoom: number, tileSize: number): number {
   if (imageryZoom <= hostCoordinate.z) {
     return Math.max(1, Math.min(MAX_COMPOSED_TEXTURE_SIZE, tileSize));
@@ -765,45 +749,6 @@ function createRasterTilePlans(
   });
 }
 
-function createComposedCanvas(size: number): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(size));
-  canvas.height = Math.max(1, Math.round(size));
-  return canvas;
-}
-
-function drawRasterTile(
-  context: CanvasRenderingContext2D,
-  request: RasterTileRequest,
-  tile: TileSource
-): void {
-  const image = tile as CanvasImageSource;
-
-  if (!request.sourceCrop) {
-    context.drawImage(
-      image,
-      request.destinationX,
-      request.destinationY,
-      request.destinationSize,
-      request.destinationSize
-    );
-    return;
-  }
-
-  const { width, height } = getTileSourceSize(tile);
-  context.drawImage(
-    image,
-    request.sourceCrop.x * width,
-    request.sourceCrop.y * height,
-    request.sourceCrop.width * width,
-    request.sourceCrop.height * height,
-    request.destinationX,
-    request.destinationY,
-    request.destinationSize,
-    request.destinationSize
-  );
-}
-
 export class RasterLayer extends Layer {
   private readonly sourceId: string;
   private readonly opacity: number;
@@ -812,6 +757,7 @@ export class RasterLayer extends Layer {
   private readonly imageryFallbackColor: string | null;
   private readonly group = new Group();
   private readonly activeTiles = new Map<string, RasterTileEntry>();
+  private gpuComposer: RasterGpuComposer | null = null;
   private context: LayerContext | null = null;
   private cachedRecoveryConfig:
     | { attempts: number; delayMs: number; fallbackColor: string | null }
@@ -839,6 +785,7 @@ export class RasterLayer extends Layer {
   onRemove(context: LayerContext): void {
     context.scene.remove(this.group);
     this.clearActiveTiles();
+    this.disposeGpuComposer();
     this.context = null;
     this.cachedRecoveryConfig = null;
   }
@@ -851,6 +798,7 @@ export class RasterLayer extends Layer {
 
   dispose(): void {
     this.clearActiveTiles();
+    this.disposeGpuComposer();
   }
 
   hasRenderableTiles(): boolean {
@@ -1051,8 +999,7 @@ export class RasterLayer extends Layer {
         requestKey: "",
         requestedImageryTileKeys: [],
         version: 0,
-        composedCanvas: null,
-        composedContext: null
+        composedTarget: null
       };
       this.activeTiles.set(plan.hostTileKey, entry);
     }
@@ -1154,6 +1101,7 @@ export class RasterLayer extends Layer {
 
     if (plan.requiresCompositing) {
       const surface = this.createCompositedMesh(
+        context,
         hostGeometry,
         hostCoordinate,
         plan,
@@ -1162,11 +1110,12 @@ export class RasterLayer extends Layer {
       );
 
       if (!isCurrent()) {
-        this.disposeRasterMesh(surface.mesh);
+        this.disposeRasterMesh(surface.mesh, { disposeMap: false });
+        surface.target.dispose();
         throw new StaleRasterTileError();
       }
 
-      this.swapEntryMesh(entry, surface.mesh, surface.canvas, surface.context2d);
+      this.swapEntryMesh(entry, surface.mesh, surface.target);
       entry.hostGeometryVersion = hostGeometryVersion;
       this.context?.requestRender?.();
       this.startDetailRequests(entry, plan, source, recoveryConfig, isCurrent);
@@ -1186,7 +1135,7 @@ export class RasterLayer extends Layer {
       throw new StaleRasterTileError();
     }
 
-    this.swapEntryMesh(entry, mesh, null, null);
+    this.swapEntryMesh(entry, mesh, null);
     entry.hostGeometryVersion = hostGeometryVersion;
     this.context?.requestRender?.();
   }
@@ -1334,13 +1283,14 @@ export class RasterLayer extends Layer {
 
     if (requiresCompositing) {
       const surface = this.createCompositedMesh(
+        context,
         hostGeometry,
         hostCoordinate,
         plan,
         cachedTiles,
         context.radius
       );
-      this.swapEntryMesh(entry, surface.mesh, surface.canvas, surface.context2d);
+      this.swapEntryMesh(entry, surface.mesh, surface.target);
       entry.hostGeometryVersion = hostGeometryVersion;
       context.requestRender?.();
       return;
@@ -1353,7 +1303,7 @@ export class RasterLayer extends Layer {
       cachedTiles[0].source,
       context.radius
     );
-    this.swapEntryMesh(entry, mesh, null, null);
+    this.swapEntryMesh(entry, mesh, null);
     entry.hostGeometryVersion = hostGeometryVersion;
     context.requestRender?.();
   }
@@ -1376,6 +1326,7 @@ export class RasterLayer extends Layer {
   }
 
   private createCompositedMesh(
+    context: LayerContext,
     hostGeometry: BufferGeometry,
     hostCoordinate: TileCoordinate,
     plan: RasterTilePlan,
@@ -1383,24 +1334,20 @@ export class RasterLayer extends Layer {
     radius: number
   ): {
     mesh: Mesh<BufferGeometry, MeshStandardMaterial>;
-    canvas: HTMLCanvasElement;
-    context2d: CanvasRenderingContext2D;
+    target: WebGLRenderTarget;
   } {
-    const canvas = createComposedCanvas(plan.textureSize);
-    const context2d = canvas.getContext("2d");
-
-    if (!context2d) {
-      throw new Error("RasterLayer missing 2D canvas context");
+    const composer = this.getGpuComposer(context);
+    const target = composer.createRenderTarget(plan.textureSize);
+    try {
+      composer.composeTiles(target, tiles.map((tile) => ({
+        request: tile.request,
+        source: tile.source
+      })));
+    } catch (error) {
+      target.dispose();
+      throw error;
     }
-
-    context2d.clearRect(0, 0, canvas.width, canvas.height);
-    context2d.imageSmoothingEnabled = true;
-
-    for (const tile of tiles) {
-      drawRasterTile(context2d, tile.request, tile.source);
-    }
-
-    const texture = createTexture(canvas);
+    const texture = target.texture;
     const material = this.createMaterial(texture);
     const mesh = new Mesh(hostGeometry, material);
     mesh.name = `${this.id}:${plan.hostTileKey}:z${plan.imageryZoom}`;
@@ -1410,8 +1357,7 @@ export class RasterLayer extends Layer {
 
     return {
       mesh,
-      canvas,
-      context2d
+      target
     };
   }
 
@@ -1431,17 +1377,20 @@ export class RasterLayer extends Layer {
   private swapEntryMesh(
     entry: RasterTileEntry,
     mesh: Mesh<BufferGeometry, MeshStandardMaterial>,
-    canvas: HTMLCanvasElement | null,
-    context2d: CanvasRenderingContext2D | null
+    target: WebGLRenderTarget | null
   ): void {
     if (entry.mesh) {
       this.group.remove(entry.mesh);
-      this.disposeRasterMesh(entry.mesh);
+      this.disposeRasterMesh(entry.mesh, { disposeMap: entry.composedTarget === null });
+    }
+
+    if (entry.composedTarget) {
+      entry.composedTarget.dispose();
+      entry.composedTarget = null;
     }
 
     entry.mesh = mesh;
-    entry.composedCanvas = canvas;
-    entry.composedContext = context2d;
+    entry.composedTarget = target;
     this.group.add(mesh);
   }
 
@@ -1468,16 +1417,39 @@ export class RasterLayer extends Layer {
           if (
             activeEntry !== entry ||
             !activeEntry.mesh ||
-            !activeEntry.composedContext
+            !activeEntry.composedTarget
           ) {
             return;
           }
 
-          drawRasterTile(activeEntry.composedContext, request, tileSource);
-          if (activeEntry.mesh.material.map) {
-            activeEntry.mesh.material.map.needsUpdate = true;
+          const context = this.context;
+
+          if (!context) {
+            return;
           }
-          this.context?.requestRender?.();
+
+          try {
+            this.getGpuComposer(context).drawTile(activeEntry.composedTarget, {
+              request,
+              source: tileSource
+            });
+            this.context?.requestRender?.();
+          } catch (renderError) {
+            this.emitLayerError(this.context, {
+              stage: "imagery",
+              category: "render",
+              severity: "warn",
+              error: renderError,
+              recoverable: true,
+              tileKey: request.tileKey,
+              metadata: {
+                source: this.sourceId,
+                coordinate: request.coordinate,
+                hostTileKey: plan.hostTileKey,
+                role: request.role
+              }
+            });
+          }
         })
         .catch((error) => {
           if (error instanceof StaleRasterTileError || isTileRequestAbort(error)) {
@@ -1643,11 +1615,14 @@ export class RasterLayer extends Layer {
 
     if (entry.mesh) {
       this.group.remove(entry.mesh);
-      this.disposeRasterMesh(entry.mesh);
+      this.disposeRasterMesh(entry.mesh, { disposeMap: entry.composedTarget === null });
     }
 
-    entry.composedCanvas = null;
-    entry.composedContext = null;
+    if (entry.composedTarget) {
+      entry.composedTarget.dispose();
+      entry.composedTarget = null;
+    }
+
     this.activeTiles.delete(tileKey);
     return true;
   }
@@ -1662,15 +1637,43 @@ export class RasterLayer extends Layer {
     geometry.dispose();
   }
 
-  private disposeRasterMesh(mesh: Mesh<BufferGeometry, MeshStandardMaterial>): void {
+  private disposeRasterMesh(
+    mesh: Mesh<BufferGeometry, MeshStandardMaterial>,
+    options: { disposeMap?: boolean } = {}
+  ): void {
+    const disposeMap = options.disposeMap ?? true;
+
     for (const child of mesh.children) {
       if (child instanceof Mesh) {
         child.geometry.dispose();
       }
     }
-    mesh.material.map?.dispose();
+
+    if (disposeMap) {
+      mesh.material.map?.dispose();
+    }
+
     mesh.material.dispose();
     this.disposeRasterGeometry(mesh.geometry);
+  }
+
+  private getGpuComposer(context: LayerContext): RasterGpuComposer {
+    const renderer = context.getRenderer?.() ?? null;
+
+    if (!renderer) {
+      throw new Error("RasterLayer missing renderer for GPU composition");
+    }
+
+    if (!this.gpuComposer) {
+      this.gpuComposer = new RasterGpuComposer(renderer);
+    }
+
+    return this.gpuComposer;
+  }
+
+  private disposeGpuComposer(): void {
+    this.gpuComposer?.dispose();
+    this.gpuComposer = null;
   }
 
   private attachPolarCapMesh(

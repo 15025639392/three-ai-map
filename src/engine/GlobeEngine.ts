@@ -165,6 +165,7 @@ export class GlobeEngine {
       camera: this.sceneSystem.camera,
       radius,
       rendererElement: this.rendererSystem.renderer.domElement,
+      getRenderer: () => this.rendererSystem.getWebGLRenderer?.() ?? null,
       requestRender: this.requestRender,
       reportError: this.handleLayerError,
       resolveRecovery: this.resolveLayerRecovery,

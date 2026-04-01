@@ -1,4 +1,4 @@
-import { PerspectiveCamera, type Object3D } from "three";
+import { PerspectiveCamera, type Object3D, type WebGLRenderer } from "three";
 import { LayerErrorPayload, LayerRecoveryOverrides, LayerRecoveryQuery, type LayerContext } from "../layers/Layer";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TerrainTileLayer } from "../layers/TerrainTileLayer";
@@ -10,6 +10,7 @@ interface SurfaceSystemOptions {
   camera: PerspectiveCamera;
   radius: number;
   rendererElement?: HTMLCanvasElement;
+  getRenderer?: () => WebGLRenderer | null;
   requestRender?: () => void;
   reportError?: (payload: LayerErrorPayload) => void;
   resolveRecovery?: (query: LayerRecoveryQuery) => LayerRecoveryOverrides | undefined;
@@ -30,6 +31,7 @@ export class SurfaceSystem {
       camera: options.camera,
       radius: options.radius,
       rendererElement: options.rendererElement,
+      getRenderer: options.getRenderer,
       requestRender: options.requestRender,
       reportError: options.reportError,
       resolveRecovery: options.resolveRecovery,

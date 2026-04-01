@@ -1,4 +1,4 @@
-import { Object3D, PerspectiveCamera, Raycaster } from "three";
+import { Object3D, PerspectiveCamera, Raycaster, type WebGLRenderer } from "three";
 import { Cartesian3Like, Cartographic } from "../geo/cartographic";
 import type { Source } from "../sources/Source";
 import type { SurfaceTilePlan } from "../tiles/SurfaceTilePlanner";
@@ -50,6 +50,7 @@ export interface LayerContext {
   camera: PerspectiveCamera;
   radius: number;
   rendererElement?: HTMLCanvasElement;
+  getRenderer?: () => WebGLRenderer | null;
   requestRender?: () => void;
   reportError?: (payload: LayerErrorPayload) => void;
   resolveRecovery?: (query: LayerRecoveryQuery) => LayerRecoveryOverrides | undefined;

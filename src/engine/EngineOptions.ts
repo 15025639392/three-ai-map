@@ -1,4 +1,4 @@
-import { Camera, PerspectiveCamera, Scene } from "three";
+import { Camera, PerspectiveCamera, Scene, type WebGLRenderer } from "three";
 import { RendererSystem } from "../core/RendererSystem";
 import type {
   LayerErrorCategory,
@@ -16,6 +16,7 @@ export interface RendererAdapter {
   renderer: {
     domElement: HTMLCanvasElement;
   };
+  getWebGLRenderer?(): WebGLRenderer | null;
   setSize(width: number, height: number): void;
   render(scene: Scene, camera: Camera): void;
   dispose(): void;

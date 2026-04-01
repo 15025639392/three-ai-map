@@ -24,6 +24,10 @@ export class RendererSystem {
     this.renderer.render(scene, camera);
   }
 
+  getWebGLRenderer(): WebGLRenderer {
+    return this.renderer;
+  }
+
   dispose(): void {
     this.renderer.dispose();
     this.renderer.domElement.remove();
