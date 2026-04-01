@@ -11,5 +11,6 @@ export interface TerrainTileHost {
   getActiveTileMesh(
     key: string
   ): Mesh<BufferGeometry, MeshStandardMaterial> | null;
+  getActiveTileGeometryVersion?(key: string): number | null;
   getSurfaceTilePlannerConfig?(): SurfaceTilePlannerConfig;
 }

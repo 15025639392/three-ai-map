@@ -1,4 +1,5 @@
 import {
+  BufferAttribute,
   BufferGeometry,
   ClampToEdgeWrapping,
   CanvasTexture,
@@ -32,17 +33,14 @@ export interface RasterLayerOptions {
 interface RasterTileEntry {
   promise: Promise<void>;
   mesh: Mesh<BufferGeometry, MeshStandardMaterial> | null;
-  previousMesh: Mesh<BufferGeometry, MeshStandardMaterial> | null;
   loading: boolean;
   hostTileKey: string;
+  hostGeometryVersion: number | null;
   requestKey: string;
   requestedImageryTileKeys: string[];
   version: number;
   composedCanvas: HTMLCanvasElement | null;
   composedContext: CanvasRenderingContext2D | null;
-  transitionElapsedMs: number;
-  previousTransitionElapsedMs: number;
-  transitionState: "none" | "fadeIn";
 }
 
 interface SourceCropRegion {
@@ -70,7 +68,6 @@ interface RasterTilePlan {
   imageryZoom: number;
   textureSize: number;
   requestKey: string;
-  morphFactor: number;
   baseRequests: RasterTileRequest[];
   detailRequests: RasterTileRequest[];
   requestedImageryTileKeys: string[];
@@ -196,8 +193,6 @@ const ZINDEX_STRIDE = 1000;
 const MAX_COMPOSED_TEXTURE_SIZE = 4096;
 const FALLBACK_PRIORITY_BOOST = 1_000_000;
 const PRIORITY_BASELINE = 100_000;
-const RASTER_CROSSFADE_DURATION_MS = 220;
-const RASTER_CROSSFADE_EPSILON = 1e-4;
 const POLAR_CAP_SEGMENTS = 10;
 const MAX_INTERACTING_DETAIL_REQUESTS_PER_HOST = 16;
 const MAX_IDLE_DETAIL_REQUESTS_PER_HOST = 48;
@@ -757,7 +752,6 @@ function createRasterTilePlans(
       imageryZoom,
       textureSize,
       requestKey,
-      morphFactor: 1,
       baseRequests,
       detailRequests,
       requestedImageryTileKeys: [...new Set(
@@ -850,15 +844,23 @@ export class RasterLayer extends Layer {
   }
 
   update(deltaTime: number, context: LayerContext): void {
+    void deltaTime;
     this.syncTiles(context);
-
-    if (this.stepTransitions(deltaTime)) {
-      context.requestRender?.();
-    }
+    this.syncHostGeometryBindings(context);
   }
 
   dispose(): void {
     this.clearActiveTiles();
+  }
+
+  hasRenderableTiles(): boolean {
+    for (const entry of this.activeTiles.values()) {
+      if (entry.mesh) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private syncTiles(context: LayerContext): void {
@@ -924,110 +926,116 @@ export class RasterLayer extends Layer {
       void this.ensureTile(plan);
     }
 
-    const removableTileKeys: string[] = [];
-    for (const [tileKey, entry] of this.activeTiles) {
+    for (const tileKey of [...this.activeTiles.keys()]) {
       if (desiredEntries.has(tileKey)) {
         continue;
       }
 
-      if (this.shouldRetainAsAncestorFallback(tileKey, desiredEntries)) {
-        if (entry.mesh) {
-          this.setMeshOpacity(entry.mesh, 1);
-        }
-        continue;
-      }
-
-      removableTileKeys.push(tileKey);
-    }
-
-    for (const tileKey of removableTileKeys) {
       this.removeTile(tileKey);
     }
   }
 
-  private stepTransitions(deltaTime: number): boolean {
-    const safeDelta = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
-    let updated = false;
+  private syncHostGeometryBindings(context: LayerContext): void {
+    const host = context.getTerrainHost?.();
 
-    for (const entry of this.activeTiles.values()) {
-      if (entry.previousMesh) {
-        entry.previousTransitionElapsedMs += safeDelta;
-        const fadeOutFactor = Math.max(
-          0,
-          1 - entry.previousTransitionElapsedMs / RASTER_CROSSFADE_DURATION_MS
-        );
-        updated = this.setMeshOpacity(entry.previousMesh, fadeOutFactor) || updated;
-
-        if (fadeOutFactor <= RASTER_CROSSFADE_EPSILON) {
-          this.group.remove(entry.previousMesh);
-          this.disposeRasterMesh(entry.previousMesh);
-          entry.previousMesh = null;
-          entry.previousTransitionElapsedMs = 0;
-          updated = true;
-        }
-      }
-
-      if (!entry.mesh) {
-        continue;
-      }
-
-      if (entry.transitionState === "fadeIn") {
-        entry.transitionElapsedMs += safeDelta;
-        const fadeInFactor = Math.min(1, entry.transitionElapsedMs / RASTER_CROSSFADE_DURATION_MS);
-        updated = this.setMeshOpacity(entry.mesh, fadeInFactor) || updated;
-
-        if (fadeInFactor >= 1 - RASTER_CROSSFADE_EPSILON) {
-          entry.transitionState = "none";
-          entry.transitionElapsedMs = 0;
-        }
-      }
+    if (!host) {
+      return;
     }
 
-    return updated;
-  }
-
-  private shouldRetainAsAncestorFallback(
-    tileKey: string,
-    desiredEntries: ReadonlyMap<string, RasterTilePlan>
-  ): boolean {
-    const ancestorCoordinate = parseTileKey(tileKey);
-
-    for (const [desiredKey] of desiredEntries) {
-      if (desiredKey === tileKey) {
+    let updatedAny = false;
+    for (const [tileKey, entry] of this.activeTiles) {
+      if (!entry.mesh || entry.loading) {
         continue;
       }
 
-      const desiredCoordinate = parseTileKey(desiredKey);
+      const hostMesh = host.getActiveTileMesh(tileKey);
+      if (!hostMesh) {
+        continue;
+      }
+
+      const hostGeometryVersion = host.getActiveTileGeometryVersion?.(tileKey) ?? null;
       if (
-        desiredCoordinate.z <= ancestorCoordinate.z ||
-        !isCoordinateWithinHost(desiredCoordinate, ancestorCoordinate)
+        hostGeometryVersion !== null &&
+        entry.hostGeometryVersion !== null &&
+        hostGeometryVersion === entry.hostGeometryVersion
       ) {
         continue;
       }
 
-      const desiredEntry = this.activeTiles.get(desiredKey);
-      if (!desiredEntry?.mesh) {
-        return true;
-      }
+      const hostCoordinate = parseTileKey(tileKey);
+      updatedAny = this.syncMeshGeometryFromHost(
+        entry.mesh,
+        hostMesh.geometry,
+        hostCoordinate,
+        context.radius
+      ) || updatedAny;
+      entry.hostGeometryVersion = hostGeometryVersion;
     }
 
-    return false;
+    if (updatedAny) {
+      context.requestRender?.();
+    }
   }
 
-  private setMeshOpacity(
-    mesh: Mesh<BufferGeometry, MeshStandardMaterial>,
-    factor: number
+  private syncMeshGeometryFromHost(
+    rasterMesh: Mesh<BufferGeometry, MeshStandardMaterial>,
+    hostGeometry: BufferGeometry,
+    hostCoordinate: TileCoordinate,
+    radius: number
   ): boolean {
-    const clampedFactor = Math.max(0, Math.min(1, factor));
-    const nextOpacity = this.opacity * clampedFactor;
-    const material = mesh.material;
-    const changed =
-      Math.abs(material.opacity - nextOpacity) > RASTER_CROSSFADE_EPSILON ||
-      material.transparent !== (nextOpacity < 1 - RASTER_CROSSFADE_EPSILON);
-    material.opacity = nextOpacity;
-    material.transparent = nextOpacity < 1 - RASTER_CROSSFADE_EPSILON;
-    material.needsUpdate = changed;
-    return changed;
+    const rasterGeometry = rasterMesh.geometry;
+    const hostPosition = hostGeometry.getAttribute("position");
+    const rasterPosition = rasterGeometry.getAttribute("position");
+    const hostIndexCount = hostGeometry.index?.count ?? 0;
+    const rasterIndexCount = rasterGeometry.index?.count ?? 0;
+    const canCopyInPlace =
+      hostPosition instanceof BufferAttribute &&
+      rasterPosition instanceof BufferAttribute &&
+      hostPosition.array.length === rasterPosition.array.length &&
+      hostPosition.itemSize === rasterPosition.itemSize &&
+      hostIndexCount === rasterIndexCount;
+
+    if (!canCopyInPlace) {
+      const replacementGeometry = hostGeometry.clone();
+      rasterMesh.geometry = replacementGeometry;
+      this.disposeRasterGeometry(rasterGeometry);
+      this.rebuildPolarCapMesh(rasterMesh, hostCoordinate, radius);
+      return true;
+    }
+
+    (rasterPosition.array as Float32Array).set(hostPosition.array as ArrayLike<number>);
+    rasterPosition.needsUpdate = true;
+
+    const hostNormal = hostGeometry.getAttribute("normal");
+    const rasterNormal = rasterGeometry.getAttribute("normal");
+    if (
+      hostNormal instanceof BufferAttribute &&
+      rasterNormal instanceof BufferAttribute &&
+      hostNormal.array.length === rasterNormal.array.length &&
+      hostNormal.itemSize === rasterNormal.itemSize
+    ) {
+      (rasterNormal.array as Float32Array).set(hostNormal.array as ArrayLike<number>);
+      rasterNormal.needsUpdate = true;
+    }
+
+    rasterGeometry.computeBoundingSphere();
+    return true;
+  }
+
+  private rebuildPolarCapMesh(
+    mesh: Mesh<BufferGeometry, MeshStandardMaterial>,
+    coordinate: TileCoordinate,
+    radius: number
+  ): void {
+    for (const child of [...mesh.children]) {
+      if (!(child instanceof Mesh)) {
+        continue;
+      }
+      mesh.remove(child);
+      child.geometry.dispose();
+    }
+
+    this.attachPolarCapMesh(mesh, coordinate, radius);
   }
 
   private ensureTile(plan: RasterTilePlan): Promise<void> {
@@ -1037,38 +1045,38 @@ export class RasterLayer extends Layer {
       entry = {
         promise: Promise.resolve(),
         mesh: null,
-        previousMesh: null,
         loading: false,
         hostTileKey: plan.hostTileKey,
+        hostGeometryVersion: null,
         requestKey: "",
         requestedImageryTileKeys: [],
         version: 0,
         composedCanvas: null,
-        composedContext: null,
-        transitionElapsedMs: 0,
-        previousTransitionElapsedMs: 0,
-        transitionState: "none"
+        composedContext: null
       };
       this.activeTiles.set(plan.hostTileKey, entry);
     }
 
     if (entry.requestKey === plan.requestKey && (entry.loading || entry.mesh)) {
-      if (entry.transitionState === "none" && entry.mesh) {
-        this.setMeshOpacity(entry.mesh, plan.morphFactor);
-      }
       return entry.promise;
     }
 
     const previousRequestedTileKeys = entry.requestedImageryTileKeys;
-    const preservedTileKeys = new Set(plan.requestedImageryTileKeys);
+    const source = this.context?.getSource?.(this.sourceId);
+    const requestedImageryTileKeys = [...plan.requestedImageryTileKeys];
+    const preservedTileKeys = new Set(requestedImageryTileKeys);
 
     entry.version += 1;
     entry.hostTileKey = plan.hostTileKey;
     entry.requestKey = plan.requestKey;
-    entry.requestedImageryTileKeys = [...plan.requestedImageryTileKeys];
+    entry.requestedImageryTileKeys = requestedImageryTileKeys;
 
     if (previousRequestedTileKeys.length > 0) {
       this.cancelImageryRequests(previousRequestedTileKeys, plan.hostTileKey, preservedTileKeys);
+    }
+
+    if (source instanceof RasterTileSource) {
+      this.tryInstallCachedFallbackMesh(entry, plan, source);
     }
 
     const version = entry.version;
@@ -1110,6 +1118,7 @@ export class RasterLayer extends Layer {
 
     const host = context.getTerrainHost?.();
     const hostMesh = host?.getActiveTileMesh(plan.hostTileKey) ?? null;
+    const hostGeometryVersion = host?.getActiveTileGeometryVersion?.(plan.hostTileKey) ?? null;
     if (host && !hostMesh) {
       throw new Error(`RasterLayer missing host mesh for tile ${plan.hostTileKey}`);
     }
@@ -1131,17 +1140,13 @@ export class RasterLayer extends Layer {
         fallbackColor: this.imageryFallbackColor
       })
     );
-    const baseRequests = plan.baseRequests.length > 0 ? plan.baseRequests : plan.detailRequests;
-    const baseTiles = await Promise.all(baseRequests.map(async (request) => ({
-      request,
-      source: await this.requestImageryTile(
-        source,
-        plan.hostTileKey,
-        request,
-        recoveryConfig,
-        isCurrent
-      )
-    })));
+    const baseTiles = await this.loadBaseTilesWithAncestorFallback(
+      source,
+      plan,
+      hostCoordinate,
+      recoveryConfig,
+      isCurrent
+    );
 
     if (!isCurrent()) {
       throw new StaleRasterTileError();
@@ -1161,7 +1166,8 @@ export class RasterLayer extends Layer {
         throw new StaleRasterTileError();
       }
 
-      this.swapEntryMesh(entry, surface.mesh, surface.canvas, surface.context2d, plan.morphFactor);
+      this.swapEntryMesh(entry, surface.mesh, surface.canvas, surface.context2d);
+      entry.hostGeometryVersion = hostGeometryVersion;
       this.context?.requestRender?.();
       this.startDetailRequests(entry, plan, source, recoveryConfig, isCurrent);
       return;
@@ -1180,8 +1186,176 @@ export class RasterLayer extends Layer {
       throw new StaleRasterTileError();
     }
 
-    this.swapEntryMesh(entry, mesh, null, null, plan.morphFactor);
+    this.swapEntryMesh(entry, mesh, null, null);
+    entry.hostGeometryVersion = hostGeometryVersion;
     this.context?.requestRender?.();
+  }
+
+  private async loadBaseTilesWithAncestorFallback(
+    source: RasterTileSource,
+    plan: RasterTilePlan,
+    hostCoordinate: TileCoordinate,
+    recoveryConfig: { attempts: number; delayMs: number; fallbackColor: string | null },
+    isCurrent: () => boolean
+  ): Promise<LoadedRasterTile[]> {
+    let candidateRequests = plan.baseRequests.length > 0 ? plan.baseRequests : plan.detailRequests;
+    if (candidateRequests.length === 0) {
+      throw new Error(`RasterLayer missing base requests for tile ${plan.hostTileKey}`);
+    }
+
+    let lastError: unknown = null;
+    let currentZoom = candidateRequests.reduce(
+      (zoom, request) => Math.max(zoom, request.coordinate.z),
+      source.minZoom
+    );
+
+    while (candidateRequests.length > 0) {
+      if (!isCurrent()) {
+        throw new StaleRasterTileError();
+      }
+
+      try {
+        return await Promise.all(candidateRequests.map(async (request) => ({
+          request,
+          source: await this.requestImageryTile(
+            source,
+            plan.hostTileKey,
+            request,
+            recoveryConfig,
+            isCurrent
+          )
+        })));
+      } catch (error) {
+        if (error instanceof StaleRasterTileError || isTileRequestAbort(error)) {
+          throw error;
+        }
+
+        lastError = error;
+      }
+
+      const nextZoom = currentZoom - 1;
+      if (nextZoom < source.minZoom) {
+        break;
+      }
+
+      candidateRequests = createCoverageRequests(
+        hostCoordinate,
+        nextZoom,
+        plan.textureSize,
+        scaleCoordinateToZoom(hostCoordinate, nextZoom),
+        "fallback"
+      );
+      currentZoom = nextZoom;
+    }
+
+    throw lastError ?? new Error(`RasterLayer failed to resolve fallback imagery for ${plan.hostTileKey}`);
+  }
+
+  private resolveCachedFallbackTiles(
+    source: RasterTileSource,
+    hostCoordinate: TileCoordinate,
+    targetZoom: number,
+    textureSize: number
+  ): LoadedRasterTile[] | null {
+    for (let zoom = targetZoom; zoom >= source.minZoom; zoom -= 1) {
+      const requests = createCoverageRequests(
+        hostCoordinate,
+        zoom,
+        textureSize,
+        scaleCoordinateToZoom(hostCoordinate, zoom),
+        "fallback"
+      );
+      const loaded: LoadedRasterTile[] = [];
+      let complete = true;
+
+      for (const request of requests) {
+        const cached = source.getCached(request.tileKey);
+
+        if (!cached) {
+          complete = false;
+          break;
+        }
+
+        loaded.push({
+          request,
+          source: cached
+        });
+      }
+
+      if (complete) {
+        return loaded;
+      }
+    }
+
+    return null;
+  }
+
+  private tryInstallCachedFallbackMesh(
+    entry: RasterTileEntry,
+    plan: RasterTilePlan,
+    source: RasterTileSource
+  ): void {
+    if (entry.mesh) {
+      return;
+    }
+
+    const context = this.context;
+
+    if (!context) {
+      return;
+    }
+
+    const hostCoordinate = parseTileKey(plan.hostTileKey);
+    const cachedTiles = this.resolveCachedFallbackTiles(
+      source,
+      hostCoordinate,
+      plan.imageryZoom,
+      plan.textureSize
+    );
+
+    if (!cachedTiles || cachedTiles.length === 0) {
+      return;
+    }
+
+    const host = context.getTerrainHost?.();
+    const hostMesh = host?.getActiveTileMesh(plan.hostTileKey) ?? null;
+
+    if (host && !hostMesh) {
+      return;
+    }
+
+    const hostGeometry = hostMesh
+      ? hostMesh.geometry.clone()
+      : buildEllipsoidTileGeometry(hostCoordinate, context.radius, RASTER_ELLIPSOID_MESH_SEGMENTS);
+
+    const requiresCompositing =
+      cachedTiles.length > 1 || cachedTiles.some((tile) => tile.request.sourceCrop !== undefined);
+    const hostGeometryVersion = host?.getActiveTileGeometryVersion?.(plan.hostTileKey) ?? null;
+
+    if (requiresCompositing) {
+      const surface = this.createCompositedMesh(
+        hostGeometry,
+        hostCoordinate,
+        plan,
+        cachedTiles,
+        context.radius
+      );
+      this.swapEntryMesh(entry, surface.mesh, surface.canvas, surface.context2d);
+      entry.hostGeometryVersion = hostGeometryVersion;
+      context.requestRender?.();
+      return;
+    }
+
+    const mesh = this.createDirectMesh(
+      hostGeometry,
+      hostCoordinate,
+      plan,
+      cachedTiles[0].source,
+      context.radius
+    );
+    this.swapEntryMesh(entry, mesh, null, null);
+    entry.hostGeometryVersion = hostGeometryVersion;
+    context.requestRender?.();
   }
 
   private createDirectMesh(
@@ -1258,34 +1432,17 @@ export class RasterLayer extends Layer {
     entry: RasterTileEntry,
     mesh: Mesh<BufferGeometry, MeshStandardMaterial>,
     canvas: HTMLCanvasElement | null,
-    context2d: CanvasRenderingContext2D | null,
-    morphFactor: number
+    context2d: CanvasRenderingContext2D | null
   ): void {
-    if (entry.previousMesh) {
-      this.group.remove(entry.previousMesh);
-      this.disposeRasterMesh(entry.previousMesh);
-      entry.previousMesh = null;
-      entry.previousTransitionElapsedMs = 0;
-    }
-
     if (entry.mesh) {
-      entry.previousMesh = entry.mesh;
-      entry.previousTransitionElapsedMs = 0;
-      this.setMeshOpacity(entry.previousMesh, 1);
+      this.group.remove(entry.mesh);
+      this.disposeRasterMesh(entry.mesh);
     }
 
     entry.mesh = mesh;
     entry.composedCanvas = canvas;
     entry.composedContext = context2d;
     this.group.add(mesh);
-
-    const clampedMorphFactor = Math.max(0, Math.min(1, morphFactor));
-    const initialOpacityFactor = entry.previousMesh ? 0 : clampedMorphFactor;
-    this.setMeshOpacity(mesh, initialOpacityFactor);
-    entry.transitionElapsedMs = initialOpacityFactor * RASTER_CROSSFADE_DURATION_MS;
-    entry.transitionState = initialOpacityFactor < 1 - RASTER_CROSSFADE_EPSILON || entry.previousMesh
-      ? "fadeIn"
-      : "none";
   }
 
   private startDetailRequests(
@@ -1484,12 +1641,6 @@ export class RasterLayer extends Layer {
 
     this.cancelImageryRequests(entry.requestedImageryTileKeys, entry.hostTileKey);
 
-    if (entry.previousMesh) {
-      this.group.remove(entry.previousMesh);
-      this.disposeRasterMesh(entry.previousMesh);
-      entry.previousMesh = null;
-    }
-
     if (entry.mesh) {
       this.group.remove(entry.mesh);
       this.disposeRasterMesh(entry.mesh);
@@ -1507,6 +1658,10 @@ export class RasterLayer extends Layer {
     }
   }
 
+  private disposeRasterGeometry(geometry: BufferGeometry): void {
+    geometry.dispose();
+  }
+
   private disposeRasterMesh(mesh: Mesh<BufferGeometry, MeshStandardMaterial>): void {
     for (const child of mesh.children) {
       if (child instanceof Mesh) {
@@ -1515,7 +1670,7 @@ export class RasterLayer extends Layer {
     }
     mesh.material.map?.dispose();
     mesh.material.dispose();
-    mesh.geometry.dispose();
+    this.disposeRasterGeometry(mesh.geometry);
   }
 
   private attachPolarCapMesh(

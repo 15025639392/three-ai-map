@@ -88,6 +88,11 @@ export class RasterTileSource implements Source {
       });
   }
 
+  getCached(coordinateOrKey: TileCoordinate | string): TileSource | null {
+    const key = typeof coordinateOrKey === "string" ? coordinateOrKey : tileKey(coordinateOrKey);
+    return this.cache.get(key) ?? null;
+  }
+
   cancel(coordinateOrKey: TileCoordinate | string): boolean {
     const key = typeof coordinateOrKey === "string" ? coordinateOrKey : tileKey(coordinateOrKey);
     return this.scheduler.cancel(key);

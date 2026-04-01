@@ -53,6 +53,7 @@ interface TerrainTileEntry {
   promise: Promise<void>;
   mesh: Mesh<BufferGeometry, MeshStandardMaterial> | null;
   provisional: boolean;
+  geometryVersion: number;
   skirtMaskKey: string;
   meshSegments: number;
   displayState: TerrainDisplayState;
@@ -514,6 +515,15 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     return this.activeTiles.get(key)?.mesh ?? null;
   }
 
+  getActiveTileGeometryVersion(key: string): number | null {
+    if (!this.displayTileKeys.has(key)) {
+      return null;
+    }
+
+    const version = this.activeTiles.get(key)?.geometryVersion;
+    return typeof version === "number" ? version : null;
+  }
+
   setColorWriteEnabled(enabled: boolean): void {
     if (this.colorWriteEnabled === enabled) {
       return;
@@ -892,6 +902,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       next[index] = basePositions[index] + (targetPositions[index] - basePositions[index]) * clamped;
     }
 
+    entry.geometryVersion += 1;
     positionAttribute.needsUpdate = true;
     entry.mesh.geometry.computeBoundingSphere();
   }
@@ -965,6 +976,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       promise: Promise.resolve(),
       mesh: existing?.mesh ?? null,
       provisional: existing?.provisional ?? false,
+      geometryVersion: existing?.geometryVersion ?? 0,
       skirtMaskKey,
       meshSegments,
       displayState,
@@ -999,6 +1011,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       provisionalMesh.renderOrder = 0;
       entry.mesh = provisionalMesh;
       entry.provisional = true;
+      entry.geometryVersion += 1;
       entry.geomorph = null;
       entry.mesh.visible = entry.visible;
       this.applyDisplayStateMaterial(entry);
@@ -1031,6 +1044,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
         entry.mesh = loaded.mesh;
         entry.provisional = false;
+        entry.geometryVersion += 1;
         entry.geomorph = loaded.geomorph;
         entry.mesh.visible = entry.visible;
         this.applyDisplayStateMaterial(entry);

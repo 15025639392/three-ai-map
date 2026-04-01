@@ -22,6 +22,7 @@ export class SurfaceSystem {
   private terrainLayer: TerrainTileLayer | null = null;
   private readonly imageryLayers = new Map<string, RasterLayer>();
   private nextAddOrder = 0;
+  private imageryCoverageEstablished = false;
 
   constructor(options: SurfaceSystemOptions) {
     this.context = {
@@ -52,6 +53,7 @@ export class SurfaceSystem {
       this.nextAddOrder += 1;
       this.terrainLayer = layer;
       layer.onAdd(this.context);
+      this.updateImageryCoverageState();
       this.syncTerrainColorWriteMode();
       return;
     }
@@ -60,6 +62,7 @@ export class SurfaceSystem {
     this.nextAddOrder += 1;
     this.imageryLayers.set(layer.id, layer);
     layer.onAdd(this.context);
+    this.updateImageryCoverageState();
     this.syncTerrainColorWriteMode();
   }
 
@@ -69,6 +72,7 @@ export class SurfaceSystem {
       this.terrainLayer = null;
       layer.onRemove(this.context);
       layer.dispose();
+      this.updateImageryCoverageState();
       this.syncTerrainColorWriteMode();
       return;
     }
@@ -82,6 +86,7 @@ export class SurfaceSystem {
     this.imageryLayers.delete(layerId);
     imagery.onRemove(this.context);
     imagery.dispose();
+    this.updateImageryCoverageState();
     this.syncTerrainColorWriteMode();
   }
 
@@ -96,6 +101,7 @@ export class SurfaceSystem {
   }
 
   update(deltaTime: number): void {
+    this.updateImageryCoverageState();
     this.syncTerrainColorWriteMode();
 
     if (this.terrainLayer?.visible) {
@@ -109,6 +115,9 @@ export class SurfaceSystem {
 
       layer.update(deltaTime, this.context);
     }
+
+    this.updateImageryCoverageState();
+    this.syncTerrainColorWriteMode();
   }
 
   get(layerId: string): TerrainTileLayer | RasterLayer | undefined {
@@ -151,6 +160,10 @@ export class SurfaceSystem {
     return false;
   }
 
+  hasEstablishedImageryCoverage(): boolean {
+    return this.imageryCoverageEstablished;
+  }
+
   getOrderedLayerIds(): string[] {
     const ids: string[] = [];
 
@@ -185,7 +198,30 @@ export class SurfaceSystem {
     }
 
     // Cesium-style composition: terrain supplies geometry, imagery supplies color.
-    // When imagery layers are visible, keep terrain in depth path but disable color writes.
-    this.terrainLayer.setColorWriteEnabled(!this.hasVisibleImageryLayers());
+    // Once imagery coverage has been established, keep terrain color writes disabled
+    // to avoid fallback flashes between terrain base color and imagery.
+    this.terrainLayer.setColorWriteEnabled(!this.imageryCoverageEstablished);
+  }
+
+  private updateImageryCoverageState(): void {
+    if (!this.hasVisibleImageryLayers()) {
+      this.imageryCoverageEstablished = false;
+      return;
+    }
+
+    if (this.imageryCoverageEstablished) {
+      return;
+    }
+
+    for (const layer of this.imageryLayers.values()) {
+      if (!layer.visible) {
+        continue;
+      }
+
+      if (layer.hasRenderableTiles()) {
+        this.imageryCoverageEstablished = true;
+        return;
+      }
+    }
   }
 }

@@ -688,9 +688,9 @@ export class GlobeEngine {
       return;
     }
 
-    // Keep base globe visible as a stable color fallback.
-    // Surface tiles (terrain/raster) should cover it through depth-tested rendering.
-    this.globe.mesh.visible = true;
+    // Once imagery coverage is established, keep base globe hidden to avoid
+    // fallback flashes between globe base color and raster imagery.
+    this.globe.mesh.visible = !this.surfaceSystem.hasEstablishedImageryCoverage();
 
     // For raster-only surface hosting, keep base globe slightly inset to avoid z-fighting.
     const scale = this.surfaceSystem.hasVisibleSurfaceLayers() ? 0.998 : 1.0;
