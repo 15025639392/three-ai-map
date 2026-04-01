@@ -7,55 +7,28 @@ import {
 } from "three";
 import { WGS84_RADIUS } from "../geo/ellipsoid";
 import { cartographicToCartesian } from "../geo/projection";
-import { TileCache } from "../tiles/TileCache";
-import { TerrariumDecoder, TerrariumDecoderStats } from "../tiles/TerrariumDecoder";
-import { TileRequestCancelledError, TileScheduler } from "../tiles/TileScheduler";
-import { corsTileLoader, type TileSource } from "../tiles/tileLoader";
+import type { TerrariumDecoderStats } from "../tiles/TerrariumDecoder";
+import { TileRequestCancelledError } from "../tiles/TileScheduler";
 import {
-  getSurfaceTileBounds,
+  getSurfaceTileBounds
 } from "../tiles/SurfaceTileTree";
-import { shouldRequestDemForCoordinate, type LngLatBounds } from "../tiles/LngLatBounds";
-import { pickTileTemplate } from "../tiles/TileUrlPicker";
-import { Layer, LayerContext, LayerRecoveryOverrides } from "./Layer";
+import { Layer, LayerContext } from "./Layer";
 import type { SurfaceTilePlannerConfig, TerrainTileHost } from "./TerrainTileHost";
 import type { TileCoordinate } from "../tiles/TileViewport";
-import type { ElevationEncoding } from "../tiles/ElevationEncoding";
-
-export interface TerrainConfig {
-  tiles: string[];
-  encode: ElevationEncoding;
-  tileSize?: number;
-  minZoom?: number;
-  maxZoom?: number;
-  cache?: number;
-  extraBounds?: LngLatBounds[];
-}
-
-export interface ElevationTileData {
-  width: number;
-  height: number;
-  data: Float32Array;
-}
+import { TerrainTileSource, type ElevationTileData } from "../sources/TerrainTileSource";
 
 export interface CoordTransformFn {
   (lng: number, lat: number): { lng: number; lat: number };
 }
 
 export interface TerrainTileLayerOptions {
-  terrain: TerrainConfig;
+  source: string;
   minMeshSegments?: number;
   maxMeshSegments?: number;
-  concurrency?: number;
-  schedulerMaxQueue?: number;
-  schedulerAgingFactor?: number;
   elevationExaggeration?: number;
   zoomExaggerationBoost?: number;
   skirtDepthMeters?: number;
   textureUvInsetPixels?: number;
-  loadElevationTile?: (
-    coordinate: TileCoordinate,
-    signal?: AbortSignal
-  ) => Promise<ElevationTileData>;
   coordTransform?: CoordTransformFn;
 }
 
@@ -79,6 +52,7 @@ interface TerrainTileEntry {
   coordinate: TileCoordinate;
   promise: Promise<void>;
   mesh: Mesh<BufferGeometry, MeshStandardMaterial> | null;
+  provisional: boolean;
   skirtMaskKey: string;
   meshSegments: number;
   displayState: TerrainDisplayState;
@@ -99,6 +73,11 @@ class StaleTerrainTileError extends Error {
 
 const TERRAIN_GEOMORPH_DURATION_MS = 220;
 const TERRAIN_GEOMORPH_EPSILON = 1e-4;
+const DEFAULT_TERRAIN_MIN_ZOOM = 1;
+const DEFAULT_TERRAIN_MAX_ZOOM = 8;
+const TERRAIN_BASE_COLOR = 0x9a9a9a;
+const PARENT_FALLBACK_POLYGON_OFFSET_FACTOR = 2;
+const PARENT_FALLBACK_POLYGON_OFFSET_UNITS = 2;
 
 function tileCoordinateKey(coordinate: TileCoordinate): string {
   return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
@@ -355,11 +334,21 @@ function buildTerrainTileGeometry(
 
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  const normals = new Float32Array(positions.length);
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    const x = positions[offset];
+    const y = positions[offset + 1];
+    const z = positions[offset + 2];
+    const length = Math.sqrt(x * x + y * y + z * z) || 1;
+    normals[offset] = x / length;
+    normals[offset + 1] = y / length;
+    normals[offset + 2] = z / length;
+  }
+  geometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
   geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.userData.surfaceVertexCount = rowSize * rowSize;
   geometry.userData.surfaceGridSize = rowSize;
-  geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
   return geometry;
 }
@@ -439,47 +428,6 @@ function isTileRequestAbort(error: unknown): boolean {
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
-
-async function defaultElevationLoader(
-  coordinate: TileCoordinate,
-  templateUrl: string,
-  decoder: TerrariumDecoder,
-  encoding: ElevationEncoding,
-  signal?: AbortSignal
-): Promise<ElevationTileData> {
-  const source = await corsTileLoader(coordinate, templateUrl, signal);
-  const canvas = document.createElement("canvas");
-  canvas.width = "width" in source ? source.width : 256;
-  canvas.height = "height" in source ? source.height : 256;
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Elevation decode canvas context is not available");
-  }
-
-  context.drawImage(source, 0, 0, canvas.width, canvas.height);
-  if (signal?.aborted) {
-    throw signal.reason;
-  }
-  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-  const heights = await decoder.decode(canvas.width, canvas.height, imageData.data, encoding);
-
-  if (signal?.aborted) {
-    throw signal.reason;
-  }
-
-  return {
-    width: canvas.width,
-    height: canvas.height,
-    data: heights
-  };
-}
-
 function computeTextureUvInset(tileSize: number, insetPixels: number): number {
   if (tileSize <= 0) {
     return 0;
@@ -488,44 +436,16 @@ function computeTextureUvInset(tileSize: number, insetPixels: number): number {
   return Math.max(0, Math.min(0.25, insetPixels / tileSize));
 }
 
-function resolveElevationRecoveryConfig(
-  context: LayerContext | null,
-  layerId: string,
-  overrides: LayerRecoveryOverrides | undefined
-): { attempts: number; delayMs: number } {
-  const baseAttempts = overrides?.elevationRetryAttempts ?? 0;
-  const baseDelayMs = overrides?.elevationRetryDelayMs ?? 0;
-  const resolvedAttempts = Math.max(0, Math.floor(baseAttempts));
-  const resolvedDelayMs = Math.max(0, Math.floor(baseDelayMs));
-
-  if (!context?.resolveRecovery) {
-    return { attempts: resolvedAttempts, delayMs: resolvedDelayMs };
-  }
-
-  const engineOverrides = context.resolveRecovery({
-    layerId,
-    stage: "tile-load",
-    category: "network",
-    severity: "warn"
+function createTerrainMaterial(): MeshStandardMaterial {
+  return new MeshStandardMaterial({
+    color: TERRAIN_BASE_COLOR,
+    depthTest: true,
+    depthWrite: true
   });
-
-  const attempts = Math.max(
-    0,
-    Math.floor(engineOverrides?.elevationRetryAttempts ?? resolvedAttempts)
-  );
-  const delayMs = Math.max(
-    0,
-    Math.floor(engineOverrides?.elevationRetryDelayMs ?? resolvedDelayMs)
-  );
-
-  return { attempts, delayMs };
 }
 
 export class TerrainTileLayer extends Layer implements TerrainTileHost {
-  private readonly terrain: TerrainConfig;
-  private readonly minZoom: number;
-  private readonly maxZoom: number;
-  private readonly tileSize: number;
+  private readonly sourceId: string;
   private readonly minMeshSegments: number;
   private readonly maxMeshSegments: number;
   private readonly skirtDepthMeters: number;
@@ -533,9 +453,6 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private readonly elevationExaggeration: number;
   private readonly zoomExaggerationBoost: number;
   private readonly coordTransform?: CoordTransformFn;
-  private readonly elevationCache: TileCache<ElevationTileData>;
-  private readonly elevationScheduler: TileScheduler<ElevationTileData, TileCoordinate>;
-  private readonly terrariumDecoder = new TerrariumDecoder();
   private readonly group = new Group();
   private readonly activeTiles = new Map<string, TerrainTileEntry>();
   private displayTileKeys = new Set<string>();
@@ -544,16 +461,11 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private currentSelectionKey = "";
   private currentDisplayKey = "";
   private renderInvalidationQueued = false;
-  private readonly elevationRetryAttempts: number;
-  private readonly elevationRetryDelayMs: number;
-  private cachedElevationRecoveryConfig: { attempts: number; delayMs: number } | null = null;
+  private colorWriteEnabled = true;
 
   constructor(id: string, options: TerrainTileLayerOptions) {
     super(id);
-    this.terrain = options.terrain;
-    this.minZoom = options.terrain.minZoom ?? 1;
-    this.maxZoom = options.terrain.maxZoom ?? 8;
-    this.tileSize = options.terrain.tileSize ?? 256;
+    this.sourceId = options.source;
     const resolvedMinMeshSegments = clampMeshSegments(options.minMeshSegments ?? 8);
     const resolvedMaxMeshSegments = clampMeshSegments(options.maxMeshSegments ?? 16);
     this.minMeshSegments = Math.min(resolvedMinMeshSegments, resolvedMaxMeshSegments);
@@ -563,36 +475,12 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     this.elevationExaggeration = options.elevationExaggeration ?? 1.15;
     this.zoomExaggerationBoost = options.zoomExaggerationBoost ?? 0;
     this.coordTransform = options.coordTransform;
-    this.elevationRetryAttempts = 0;
-    this.elevationRetryDelayMs = 0;
-    this.elevationCache = new TileCache<ElevationTileData>(options.terrain.cache ?? 96);
-
-    const tiles = options.terrain.tiles;
-    const encoding = options.terrain.encode;
-    const loadElevationTile =
-      options.loadElevationTile ??
-      ((coordinate: TileCoordinate, signal?: AbortSignal) =>
-        defaultElevationLoader(
-          coordinate,
-          pickTileTemplate(tiles, coordinate),
-          this.terrariumDecoder,
-          encoding,
-          signal
-        ));
-
-    this.elevationScheduler = new TileScheduler({
-      concurrency: options.concurrency ?? 6,
-      maxQueueSize: options.schedulerMaxQueue ?? Math.max(96, (options.concurrency ?? 6) * 64),
-      agingFactor: options.schedulerAgingFactor ?? 12,
-      loadTile: loadElevationTile
-    });
 
     this.group.name = id;
   }
 
   onAdd(context: LayerContext): void {
     this.context = context;
-    this.cachedElevationRecoveryConfig = null;
     context.scene.add(this.group);
     this.syncTiles(context);
   }
@@ -601,7 +489,6 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     context.scene.remove(this.group);
     this.clearActiveTiles();
     this.context = null;
-    this.cachedElevationRecoveryConfig = null;
     this.displayTileKeys.clear();
     this.currentSelectionKey = "";
     this.currentDisplayKey = "";
@@ -627,39 +514,68 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     return this.activeTiles.get(key)?.mesh ?? null;
   }
 
+  setColorWriteEnabled(enabled: boolean): void {
+    if (this.colorWriteEnabled === enabled) {
+      return;
+    }
+
+    this.colorWriteEnabled = enabled;
+    for (const entry of this.activeTiles.values()) {
+      if (!entry.mesh) {
+        continue;
+      }
+      this.applyDisplayStateMaterial(entry);
+    }
+    this.invalidateRender();
+  }
+
   getSurfaceTilePlannerConfig(): SurfaceTilePlannerConfig {
+    const source = this.getTerrainSource();
     return {
       meshMaxSegments: this.maxMeshSegments,
-      minZoom: this.minZoom,
-      maxZoom: this.maxZoom
+      minZoom: source?.minZoom ?? DEFAULT_TERRAIN_MIN_ZOOM,
+      maxZoom: source?.maxZoom ?? DEFAULT_TERRAIN_MAX_ZOOM
     };
   }
 
   getDebugStats(): {
     activeTileCount: number;
     activeTileKeys: string[];
-    elevation: ReturnType<TileScheduler<ElevationTileData, TileCoordinate>["getStats"]>;
+    elevation: ReturnType<TerrainTileSource["getStats"]>;
     terrariumDecode: TerrariumDecoderStats;
   } {
+    const source = this.getTerrainSource();
     return {
       activeTileCount: this.displayTileKeys.size,
       activeTileKeys: this.getActiveTileKeys(),
-      elevation: this.elevationScheduler.getStats(),
-      terrariumDecode: this.terrariumDecoder.getStats()
+      elevation: source?.getStats() ?? {
+        requested: 0,
+        deduplicated: 0,
+        started: 0,
+        succeeded: 0,
+        failed: 0,
+        cancelled: 0,
+        active: 0,
+        queued: 0
+      },
+      terrariumDecode: source?.getDecodeStats() ?? {
+        requestCount: 0,
+        workerHitCount: 0,
+        fallbackCount: 0,
+        workerHitRate: 0
+      }
     };
   }
 
   dispose(): void {
     this.clearActiveTiles();
-    this.elevationCache.clear();
-    this.elevationScheduler.clear();
-    this.terrariumDecoder.dispose();
   }
 
   private syncTiles(context: LayerContext, deltaTime = 0): void {
+    const terrainSource = this.getTerrainSource(context);
     const sharedPlan = context.getSurfaceTilePlan?.();
 
-    if (!sharedPlan) {
+    if (!terrainSource || !sharedPlan) {
       this.currentSelectionKey = "";
       this.currentDisplayKey = "";
       this.displayTileKeys.clear();
@@ -701,6 +617,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       this.ensureTile(
         coordinate,
         context.radius,
+        terrainSource,
         desiredTileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask(),
         "readyLeaf",
         sharedPlan.interactionPhase,
@@ -768,6 +685,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       this.ensureTile(
         coordinate,
         context.radius,
+        terrainSource,
         displayTileSkirtMasks.get(tileCoordinateKey(coordinate)) ?? createDefaultSkirtMask(),
         desiredKeys.has(tileCoordinateKey(coordinate)) ? "readyLeaf" : "parentFallback",
         sharedPlan.interactionPhase,
@@ -810,26 +728,32 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     desiredKeys: Set<string>
   ): TileCoordinate | null {
     let current: TileCoordinate | null = coordinate;
+    let provisionalCandidate: TileCoordinate | null = null;
 
     while (current) {
       const key = tileCoordinateKey(current);
       const entry = this.activeTiles.get(key);
 
+      if (!provisionalCandidate && entry?.mesh) {
+        provisionalCandidate = current;
+      }
+
       if (
         entry?.mesh &&
+        !entry.provisional &&
         (current.z < coordinate.z || this.areSelectedSiblingsReady(current, desiredKeys))
       ) {
         return current;
       }
 
       if (current.z === 0) {
-        return null;
+        return provisionalCandidate;
       }
 
       current = getParentCoordinate(current);
     }
 
-    return null;
+    return provisionalCandidate;
   }
 
   private areSelectedSiblingsReady(
@@ -849,7 +773,10 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       return true;
     }
 
-    return siblingKeys.every((key) => this.activeTiles.get(key)?.mesh);
+    return siblingKeys.every((key) => {
+      const sibling = this.activeTiles.get(key);
+      return Boolean(sibling?.mesh && !sibling.provisional);
+    });
   }
 
   private updateDisplayStates(
@@ -867,6 +794,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
       if (entry.mesh) {
         entry.mesh.visible = visible;
+        this.applyDisplayStateMaterial(entry);
       }
 
       if (!entry.geomorph) {
@@ -969,20 +897,28 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   }
 
   private computeElevationExaggeration(zoom: number): number {
-    if (this.zoomExaggerationBoost <= 0 || this.maxZoom <= this.minZoom) {
+    const source = this.getTerrainSource();
+    const minZoom = source?.minZoom ?? DEFAULT_TERRAIN_MIN_ZOOM;
+    const maxZoom = source?.maxZoom ?? DEFAULT_TERRAIN_MAX_ZOOM;
+
+    if (this.zoomExaggerationBoost <= 0 || maxZoom <= minZoom) {
       return this.elevationExaggeration;
     }
 
-    const t = (zoom - this.minZoom) / (this.maxZoom - this.minZoom);
+    const t = (zoom - minZoom) / (maxZoom - minZoom);
     return this.elevationExaggeration + t * this.zoomExaggerationBoost;
   }
 
   private resolveMeshSegments(zoom: number, interactionPhase: "idle" | "interacting"): number {
-    if (this.maxMeshSegments <= this.minMeshSegments || this.maxZoom <= this.minZoom) {
+    const source = this.getTerrainSource();
+    const minZoom = source?.minZoom ?? DEFAULT_TERRAIN_MIN_ZOOM;
+    const maxZoom = source?.maxZoom ?? DEFAULT_TERRAIN_MAX_ZOOM;
+
+    if (this.maxMeshSegments <= this.minMeshSegments || maxZoom <= minZoom) {
       return this.maxMeshSegments;
     }
 
-    const zoomT = Math.max(0, Math.min(1, (zoom - this.minZoom) / (this.maxZoom - this.minZoom)));
+    const zoomT = Math.max(0, Math.min(1, (zoom - minZoom) / (maxZoom - minZoom)));
     const blended = this.minMeshSegments + (this.maxMeshSegments - this.minMeshSegments) * zoomT;
     const rounded = Math.round(blended);
     const interactionAdjusted = interactionPhase === "interacting"
@@ -1003,6 +939,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private ensureTile(
     coordinate: TileCoordinate,
     radius: number,
+    source: TerrainTileSource,
     skirtMask: TileSkirtMask,
     displayState: TerrainDisplayState,
     interactionPhase: "idle" | "interacting",
@@ -1027,6 +964,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       coordinate,
       promise: Promise.resolve(),
       mesh: existing?.mesh ?? null,
+      provisional: existing?.provisional ?? false,
       skirtMaskKey,
       meshSegments,
       displayState,
@@ -1041,10 +979,37 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
     const isCurrent = () => this.activeTiles.get(key) === entry;
     const elevationExaggeration = this.computeElevationExaggeration(coordinate.z);
+    const uvInset = computeTextureUvInset(source.tileSize, this.textureUvInsetPixels);
+
+    if (!entry.mesh) {
+      const provisionalGeometry = buildTerrainTileGeometry(
+        coordinate,
+        radius,
+        meshSegments,
+        null,
+        elevationExaggeration,
+        this.skirtDepthMeters,
+        uvInset,
+        skirtMask,
+        this.coordTransform
+      );
+      const provisionalMaterial = createTerrainMaterial();
+      const provisionalMesh = new Mesh(provisionalGeometry, provisionalMaterial);
+      provisionalMesh.name = key;
+      provisionalMesh.renderOrder = 0;
+      entry.mesh = provisionalMesh;
+      entry.provisional = true;
+      entry.geomorph = null;
+      entry.mesh.visible = entry.visible;
+      this.applyDisplayStateMaterial(entry);
+      this.group.add(provisionalMesh);
+      this.invalidateRender();
+    }
 
     entry.promise = this.loadTileMesh(
       coordinate,
       radius,
+      source,
       meshSegments,
       skirtMask,
       requestPriority,
@@ -1065,8 +1030,10 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
         }
 
         entry.mesh = loaded.mesh;
+        entry.provisional = false;
         entry.geomorph = loaded.geomorph;
         entry.mesh.visible = entry.visible;
+        this.applyDisplayStateMaterial(entry);
         this.group.add(loaded.mesh);
         if (entry.geomorph) {
           this.applyGeomorphFactor(entry, entry.geomorph.currentFactor);
@@ -1092,38 +1059,15 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
         if (!isCurrent()) {
           return;
         }
-
-        // Build a flat tile mesh so the surface remains continuous.
-        const geometry = buildTerrainTileGeometry(
-          coordinate,
-          radius,
-          meshSegments,
-          null,
-          elevationExaggeration,
-          this.skirtDepthMeters,
-          computeTextureUvInset(this.tileSize, this.textureUvInsetPixels),
-          skirtMask,
-          this.coordTransform
-        );
-        const material = new MeshStandardMaterial({
-          color: 0x3a3a3a,
-          depthTest: true,
-          depthWrite: true
-        });
-        const mesh = new Mesh(geometry, material);
-        mesh.name = key;
-        mesh.renderOrder = 0;
-
+        // Keep current mesh (if any), otherwise let selection fall back to parent tile.
+        // Rendering a flat fallback patch here causes visible dark blocks and seam pops.
         if (entry.mesh) {
-          this.group.remove(entry.mesh);
-          entry.mesh.geometry.dispose();
-          entry.mesh.material.dispose();
+          entry.mesh.visible = entry.visible;
+          this.applyDisplayStateMaterial(entry);
+        } else {
+          entry.provisional = false;
+          entry.geomorph = null;
         }
-
-        entry.mesh = mesh;
-        entry.geomorph = null;
-        entry.mesh.visible = entry.visible;
-        this.group.add(mesh);
         this.invalidateRender();
       });
 
@@ -1134,6 +1078,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
   private async loadTileMesh(
     coordinate: TileCoordinate,
     radius: number,
+    source: TerrainTileSource,
     meshSegments: number,
     skirtMask: TileSkirtMask,
     requestPriority: number,
@@ -1146,19 +1091,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       throw new StaleTerrainTileError();
     }
 
-    const needsDem = shouldRequestDemForCoordinate(coordinate, this.terrain.extraBounds);
-    let elevation: ElevationTileData | null = null;
-
-    if (needsDem) {
-      elevation = this.elevationCache.get(key) ?? null;
-
-      if (!elevation) {
-        elevation = await this.loadElevationWithRecovery(key, coordinate, requestPriority);
-        if (elevation) {
-          this.elevationCache.set(key, elevation);
-        }
-      }
-    }
+    const elevation = await source.request(coordinate, { priority: requestPriority });
 
     if (!isCurrent()) {
       throw new StaleTerrainTileError();
@@ -1171,16 +1104,12 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       elevation,
       elevationExaggeration,
       this.skirtDepthMeters,
-      computeTextureUvInset(this.tileSize, this.textureUvInsetPixels),
+      computeTextureUvInset(source.tileSize, this.textureUvInsetPixels),
       skirtMask,
       this.coordTransform
     );
 
-    const material = new MeshStandardMaterial({
-      color: 0x3a3a3a,
-      depthTest: true,
-      depthWrite: true
-    });
+    const material = createTerrainMaterial();
 
     if (!isCurrent()) {
       geometry.dispose();
@@ -1225,7 +1154,8 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
     const parentCoordinate = getParentCoordinate(coordinate);
     const parentKey = tileCoordinateKey(parentCoordinate);
-    const parentGeometry = this.activeTiles.get(parentKey)?.mesh?.geometry;
+    const parentEntry = this.activeTiles.get(parentKey);
+    const parentGeometry = parentEntry?.provisional ? null : parentEntry?.mesh?.geometry;
 
     if (!parentGeometry) {
       return null;
@@ -1295,57 +1225,6 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
     };
   }
 
-  private async loadElevationWithRecovery(
-    tileKey: string,
-    coordinate: TileCoordinate,
-    priority: number
-  ): Promise<ElevationTileData | null> {
-    const recoveryConfig = this.cachedElevationRecoveryConfig ?? (
-      this.cachedElevationRecoveryConfig = resolveElevationRecoveryConfig(this.context, this.id, undefined)
-    );
-    const attempts = recoveryConfig.attempts;
-    const delayMs = recoveryConfig.delayMs;
-
-    let lastError: unknown = null;
-
-    for (let attempt = 0; attempt <= attempts; attempt += 1) {
-      try {
-        return await this.elevationScheduler.request(tileKey, coordinate, { priority });
-      } catch (error) {
-        if (isTileRequestAbort(error)) {
-          throw error;
-        }
-
-        lastError = error;
-
-        if (attempt < attempts) {
-          if (delayMs > 0) {
-            await sleep(delayMs);
-          } else {
-            await new Promise<void>((resolve) => {
-              queueMicrotask(resolve);
-            });
-          }
-          continue;
-        }
-
-        break;
-      }
-    }
-
-    this.emitLayerError(this.context, {
-      stage: "tile-load",
-      category: "network",
-      severity: "warn",
-      error: lastError,
-      recoverable: true,
-      tileKey,
-      metadata: { coordinate, attempts: attempts + 1 }
-    });
-
-    return null;
-  }
-
   private removeTile(key: string): boolean {
     const entry = this.activeTiles.get(key);
 
@@ -1353,7 +1232,7 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       return false;
     }
 
-    this.elevationScheduler.cancel(key);
+    this.getTerrainSource()?.cancel(key);
 
     if (entry.mesh) {
       this.group.remove(entry.mesh);
@@ -1363,6 +1242,21 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
 
     this.activeTiles.delete(key);
     return true;
+  }
+
+  private applyDisplayStateMaterial(entry: TerrainTileEntry): void {
+    if (!entry.mesh) {
+      return;
+    }
+
+    const material = entry.mesh.material;
+    const useFallbackOffset = entry.displayState === "parentFallback";
+    const useColorWrite = this.colorWriteEnabled && !entry.provisional;
+    material.polygonOffset = useFallbackOffset;
+    material.polygonOffsetFactor = useFallbackOffset ? PARENT_FALLBACK_POLYGON_OFFSET_FACTOR : 0;
+    material.polygonOffsetUnits = useFallbackOffset ? PARENT_FALLBACK_POLYGON_OFFSET_UNITS : 0;
+    material.colorWrite = useColorWrite;
+    material.needsUpdate = true;
   }
 
   private clearActiveTiles(): boolean {
@@ -1385,5 +1279,10 @@ export class TerrainTileLayer extends Layer implements TerrainTileHost {
       this.renderInvalidationQueued = false;
       this.context?.requestRender?.();
     });
+  }
+
+  private getTerrainSource(context: LayerContext | null = this.context): TerrainTileSource | null {
+    const source = context?.getSource?.(this.sourceId);
+    return source instanceof TerrainTileSource ? source : null;
   }
 }

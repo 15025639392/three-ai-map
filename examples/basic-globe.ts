@@ -1,8 +1,7 @@
 import { CanvasTexture } from "three";
 import {
   GlobeEngine,
-  TerrainTileLayer,
-  RasterTileSource,
+  TerrainTileLayer, TerrainTileSource, RasterTileSource,
   RasterLayer,
   AnimationManager,
   haversineDistance
@@ -146,18 +145,21 @@ export function runBasicGlobe(container: HTMLElement, output: HTMLElement): Glob
   });
 
   /* ---- tile layers ---- */
+  const terrainSourceId = "terrain-dem";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 3,
+    maxZoom: 11,
+    tileSize: 128,
+    cache: 96,
+    concurrency: 6
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 3,
-      maxZoom: 11,
-      tileSize: 128,
-      cache: 96,
-    },
+    source: terrainSourceId,
     minMeshSegments: 16,
     maxMeshSegments: 16,
-    concurrency: 6,
     elevationExaggeration: 1,
     zoomExaggerationBoost: 6,
     textureUvInsetPixels: 1,

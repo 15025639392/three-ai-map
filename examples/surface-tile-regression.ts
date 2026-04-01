@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
-import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
+import { GlobeEngine, TerrainTileLayer, TerrainTileSource, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function createFlatElevationTile(): ElevationTileData {
@@ -44,20 +44,24 @@ export function runSurfaceTileRegression(
     radius: 1,
     background: "#020611",
   });
+  const terrainSourceId = "terrain-source";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 1,
+    maxZoom: 6,
+    tileSize: 256,
+    cache: 16,
+    concurrency: 2,
+    loadTile: async () => createFlatElevationTile()
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["memory://{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 1,
-      maxZoom: 6,
-      tileSize: 256,
-      cache: 16,
-    },
+    source: terrainSourceId,
     minMeshSegments: 2,
     maxMeshSegments: 2,
     skirtDepthMeters: 0,
-    elevationExaggeration: 0,
-    loadElevationTile: async () => createFlatElevationTile(),
+    elevationExaggeration: 0
   });
 
   const syncStatus = (phase: string): void => {

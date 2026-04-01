@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
-import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
+import { GlobeEngine, TerrainTileLayer, TerrainTileSource, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
@@ -80,22 +80,13 @@ function createElevationTile(coordinate: TileCoordinate): ElevationTileData {
   return { width, height, data };
 }
 
-function createTerrainLayer(layerId: string): TerrainTileLayer {
+function createTerrainLayer(layerId: string, sourceId: string): TerrainTileLayer {
   return new TerrainTileLayer(layerId, {
-    terrain: {
-      tiles: ["memory://{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 2,
-      maxZoom: 6,
-      tileSize: 128,
-      cache: 64,
-    },
+    source: sourceId,
     minMeshSegments: 2,
     maxMeshSegments: 2,
     skirtDepthMeters: 0,
-    elevationExaggeration: 0,
-    loadElevationTile: async (coordinate, signal?: AbortSignal) =>
-      delayValue(8, () => createElevationTile(coordinate), signal)
+    elevationExaggeration: 0
   });
 }
 
@@ -111,6 +102,19 @@ export function runSurfaceTileLifecycleRegression(
     radius: 1,
     background: "#020611"
   });
+  const terrainSourceId = "lifecycle-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 2,
+    maxZoom: 6,
+    tileSize: 128,
+    cache: 64,
+    concurrency: 4,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
+      delayValue(8, () => createElevationTile(coordinate), signal)
+  });
+  engine.addSource(terrainSourceId, terrainSource);
 
   const rasterSourceId = "lifecycle-raster";
   const rasterSource = new RasterTileSource(rasterSourceId, {
@@ -127,7 +131,7 @@ export function runSurfaceTileLifecycleRegression(
   });
   engine.addSource(rasterSourceId, rasterSource);
 
-  let activeTerrain = createTerrainLayer(layerId);
+  let activeTerrain = createTerrainLayer(layerId, terrainSourceId);
   const rasterLayer = new RasterLayer({ id: `${layerId}:raster`, source: rasterSourceId });
   let beforeTileKeys = "";
   let beforeTileCount = 0;
@@ -215,7 +219,7 @@ export function runSurfaceTileLifecycleRegression(
       output.textContent = `after-remove:tiles=${afterRemoveTileCount}:group=${afterRemoveGroupPresent}`;
 
       window.setTimeout(() => {
-        activeTerrain = createTerrainLayer(layerId);
+        activeTerrain = createTerrainLayer(layerId, terrainSourceId);
         engine.addLayer(activeTerrain);
         container.dataset.phase = "after-readd";
         output.textContent = "after-readd:loading";

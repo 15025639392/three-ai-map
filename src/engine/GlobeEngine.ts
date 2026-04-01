@@ -1,4 +1,4 @@
-import { Raycaster, Vector2 } from "three";
+import { Group, Raycaster, Vector2 } from "three";
 import { CameraController } from "../core/CameraController";
 import { InteractionAnchorOverlay } from "../core/InteractionAnchorOverlay";
 import { PerformanceMonitor, PerformanceReport } from "../core/PerformanceMonitor";
@@ -32,12 +32,14 @@ import { PolylineLayer } from "../layers/PolylineLayer";
 import { EventEmitter } from "../utils/EventEmitter";
 import { Source } from "../sources/Source";
 import { SourceManager } from "../sources/SourceManager";
+import { RasterLayer } from "../layers/RasterLayer";
 import { TerrainTileLayer } from "../layers/TerrainTileLayer";
 import {
   planSurfaceTileNodes,
   type SurfaceTileInteractionPhase,
   type SurfaceTilePlan
 } from "../tiles/SurfaceTilePlanner";
+import { SurfaceSystem } from "../surface/SurfaceSystem";
 
 export interface GlobeEngineEvents {
   click: {
@@ -70,10 +72,13 @@ export class GlobeEngine {
 
   private readonly rendererSystem: RendererAdapter;
   private readonly cameraController: CameraController;
-  private readonly layerManager: LayerManager;
+  private readonly overlayLayerManager: LayerManager;
+  private readonly surfaceSystem: SurfaceSystem;
+  private readonly layerRegistry = new Map<string, Layer>();
+  private readonly surfaceRoot = new Group();
+  private readonly overlayRoot = new Group();
   private readonly sourceManager: SourceManager;
   private readonly interactionAnchorOverlay: InteractionAnchorOverlay | null;
-  private terrainHost: TerrainTileLayer | null = null;
   private readonly showBaseGlobe: boolean;
   private readonly recoveryPolicyDefaults: LayerRecoveryOverrides;
   private readonly recoveryPolicyRules: GlobeEngineRecoveryRule[];
@@ -132,26 +137,38 @@ export class GlobeEngine {
     this.atmosphere = new AtmosphereMesh(radius);
     this.starfield = new Starfield(1200, radius * 18);
     this.performanceMonitor = new PerformanceMonitor();
+    this.surfaceRoot.name = "surface-pass-root";
+    this.overlayRoot.name = "overlay-pass-root";
+    this.sceneSystem.scene.add(this.starfield.points);
     if (showBaseGlobe) {
       this.sceneSystem.scene.add(this.globe.mesh);
     }
     this.sceneSystem.scene.add(this.atmosphere.mesh);
-    this.sceneSystem.scene.add(this.starfield.points);
+    this.sceneSystem.scene.add(this.surfaceRoot);
+    this.sceneSystem.scene.add(this.overlayRoot);
     this.sourceManager = new SourceManager({
       requestRender: this.requestRender,
       resolveRecovery: this.resolveLayerRecovery
     });
-    this.layerManager = new LayerManager({
-      scene: this.sceneSystem.scene,
+    this.overlayLayerManager = new LayerManager({
+      scene: this.overlayRoot,
       camera: this.sceneSystem.camera,
-      globe: this.globe,
+      radius,
+      rendererElement: this.rendererSystem.renderer.domElement,
+      requestRender: this.requestRender,
+      reportError: this.handleLayerError,
+      resolveRecovery: this.resolveLayerRecovery,
+      getSource: (id: string) => this.sourceManager.get(id)
+    });
+    this.surfaceSystem = new SurfaceSystem({
+      scene: this.surfaceRoot,
+      camera: this.sceneSystem.camera,
       radius,
       rendererElement: this.rendererSystem.renderer.domElement,
       requestRender: this.requestRender,
       reportError: this.handleLayerError,
       resolveRecovery: this.resolveLayerRecovery,
       getSource: (id: string) => this.sourceManager.get(id),
-      getTerrainHost: () => this.terrainHost,
       getSurfaceTilePlan: () => this.getSurfaceTilePlan()
     });
 
@@ -211,32 +228,43 @@ export class GlobeEngine {
     this.interactionAnchorOverlay?.update(this.cameraController.getInteractionDebugState());
     this.sceneSystem.camera.updateMatrixWorld(true);
     this.currentSurfaceTilePlan = this.buildSurfaceTilePlan();
-    this.layerManager.update(deltaTime);
+    this.surfaceSystem.update(deltaTime);
+    this.overlayLayerManager.update(deltaTime);
+    this.applyBaseGlobeTerrainInset();
     this.rendererSystem.render(this.sceneSystem.scene, this.sceneSystem.camera);
     this.renderCount += 1;
     this.performanceMonitor.update(deltaTime);
     this.performanceMonitor.trackMetric("renderCount", this.renderCount);
     this.performanceMonitor.trackMetric("errorCount", this.errorCount);
-    this.performanceMonitor.trackMetric("layerCount", this.layerManager.getOrderedLayerIds().length);
+    this.performanceMonitor.trackMetric("layerCount", this.layerRegistry.size);
     this.performanceMonitor.trackMetric("sceneObjectCount", this.sceneSystem.scene.children.length);
     this.performanceMonitor.trackMetric("cameraAltitude", this.getView().altitude);
   }
 
   addLayer(layer: Layer): void {
-    if (layer instanceof TerrainTileLayer) {
-      if (this.terrainHost && this.terrainHost !== layer) {
-        throw new Error("Only one TerrainTileLayer can be added to GlobeEngine at a time");
-      }
+    if (this.layerRegistry.has(layer.id)) {
+      throw new Error(`Layer "${layer.id}" already exists`);
+    }
 
-      this.terrainHost = layer;
+    if (this.isSurfaceLayer(layer)) {
+      this.surfaceSystem.add(layer);
       this.currentSurfaceTilePlan = null;
       this.applyBaseGlobeTerrainInset();
+    } else {
+      this.overlayLayerManager.add(layer);
     }
-    this.layerManager.add(layer);
+
+    this.layerRegistry.set(layer.id, layer);
     this.render();
   }
 
   removeLayer(layerId: string): void {
+    const existing = this.layerRegistry.get(layerId);
+
+    if (!existing) {
+      return;
+    }
+
     if (this.markerLayer?.id === layerId) {
       this.markerLayer = null;
     }
@@ -247,15 +275,20 @@ export class GlobeEngine {
       this.polygonLayer = null;
     }
 
-    const existing = this.layerManager.get(layerId);
-    if (existing && existing === this.terrainHost) {
-      this.terrainHost = null;
+    if (this.isSurfaceLayer(existing)) {
+      this.surfaceSystem.remove(layerId);
       this.currentSurfaceTilePlan = null;
       this.applyBaseGlobeTerrainInset();
+    } else {
+      this.overlayLayerManager.remove(layerId);
     }
 
-    this.layerManager.remove(layerId);
+    this.layerRegistry.delete(layerId);
     this.render();
+  }
+
+  getLayer(layerId: string): Layer | undefined {
+    return this.layerRegistry.get(layerId);
   }
 
   addSource(id: string, source: Source): void {
@@ -322,7 +355,7 @@ export class GlobeEngine {
     this.pointer.y = -((screenY - rect.top) / height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.sceneSystem.camera);
 
-    const layerHit = this.layerManager.pick(this.raycaster);
+    const layerHit = this.overlayLayerManager.pick(this.raycaster);
 
     if (layerHit) {
       return layerHit;
@@ -359,9 +392,10 @@ export class GlobeEngine {
     this.rendererSystem.renderer.domElement.removeEventListener("contextmenu", this.handleContextMenu);
     this.cancelScheduledRender();
     this.clearInteractionIdleTimeout();
+    this.surfaceSystem.clear();
+    this.overlayLayerManager.clear();
+    this.layerRegistry.clear();
     this.sourceManager.clear();
-    this.layerManager.clear();
-    this.terrainHost = null;
     this.applyBaseGlobeTerrainInset();
     this.cameraController.dispose();
     this.interactionAnchorOverlay?.destroy();
@@ -565,7 +599,7 @@ export class GlobeEngine {
   }
 
   private buildSurfaceTilePlan(): SurfaceTilePlan {
-    const plannerConfig = this.terrainHost?.getSurfaceTilePlannerConfig?.();
+    const plannerConfig = this.surfaceSystem.getTerrainHost()?.getSurfaceTilePlannerConfig?.();
     const viewportWidth =
       this.rendererSystem.renderer.domElement.clientWidth ||
       this.rendererSystem.renderer.domElement.width ||
@@ -654,10 +688,24 @@ export class GlobeEngine {
       return;
     }
 
-    // Terrain tiles are chord-based meshes; without an inset, the base globe sphere can
-    // occlude them via depth testing (especially at low zoom / coarse meshSegments).
-    const scale = this.terrainHost ? 0.998 : 1.0;
+    // Keep base globe visible as a stable color fallback.
+    // Surface tiles (terrain/raster) should cover it through depth-tested rendering.
+    this.globe.mesh.visible = true;
+
+    // For raster-only surface hosting, keep base globe slightly inset to avoid z-fighting.
+    const scale = this.surfaceSystem.hasVisibleSurfaceLayers() ? 0.998 : 1.0;
     this.globe.mesh.scale.setScalar(scale);
     this.globe.mesh.updateMatrixWorld(true);
+  }
+
+  private getOrderedLayerIds(): string[] {
+    return [
+      ...this.surfaceSystem.getOrderedLayerIds(),
+      ...this.overlayLayerManager.getOrderedLayerIds()
+    ];
+  }
+
+  private isSurfaceLayer(layer: Layer): layer is TerrainTileLayer | RasterLayer {
+    return layer instanceof TerrainTileLayer || layer instanceof RasterLayer;
   }
 }

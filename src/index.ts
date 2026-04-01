@@ -26,10 +26,8 @@ export { PolylineLayer } from "./layers/PolylineLayer";
 export { PolygonLayer } from "./layers/PolygonLayer";
 export { TerrainTileLayer } from "./layers/TerrainTileLayer";
 export type {
-  TerrainConfig,
   TerrainTileLayerOptions,
-  CoordTransformFn,
-  ElevationTileData
+  CoordTransformFn
 } from "./layers/TerrainTileLayer";
 export { RasterLayer } from "./layers/RasterLayer";
 export type { RasterLayerOptions } from "./layers/RasterLayer";
@@ -91,6 +89,8 @@ export type { ElevationEncoding } from "./tiles/ElevationEncoding";
 export type { Source, SourceContext } from "./sources/Source";
 export { RasterTileSource } from "./sources/RasterTileSource";
 export type { RasterTileSourceOptions } from "./sources/RasterTileSource";
+export { TerrainTileSource } from "./sources/TerrainTileSource";
+export type { TerrainTileSourceOptions, ElevationTileData } from "./sources/TerrainTileSource";
 
 // Spatial Index
 export { SpatialIndex } from "./spatial/SpatialIndex";

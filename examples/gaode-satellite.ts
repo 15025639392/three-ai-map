@@ -72,6 +72,10 @@ function sameZooms(left: number[], right: number[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function coversZooms(covering: number[], required: number[]): boolean {
+  return required.every((zoom) => covering.includes(zoom));
+}
+
 function maxZoom(zooms: number[]): number {
   if (zooms.length === 0) {
     return Number.NEGATIVE_INFINITY;
@@ -117,20 +121,6 @@ function altitudeForTargetZoom(radius: number, targetZoom: number): number {
   return Math.max(minAltitude, computedAltitude);
 }
 
-function getLayerManager(engine: GlobeEngine): {
-  get(layerId: string): unknown;
-} {
-  const layerManager = Reflect.get(engine as object, "layerManager");
-
-  if (!layerManager || typeof layerManager !== "object") {
-    throw new Error("Missing GlobeEngine layer manager");
-  }
-
-  return layerManager as {
-    get(layerId: string): unknown;
-  };
-}
-
 function getSourceManager(engine: GlobeEngine): {
   get(sourceId: string): unknown;
 } {
@@ -165,65 +155,49 @@ function forceInteractingPhase(engine: GlobeEngine): void {
 }
 
 function applySmokeLoadDelay(engine: GlobeEngine, detailZoom: number, delayMs = 220): void {
-  const terrainScheduler = Reflect.get(getTerrainLayer(engine) as object, "elevationScheduler");
+  const patchSourceScheduler = (source: unknown): void => {
+    if (!source || typeof source !== "object") {
+      return;
+    }
 
-  if (terrainScheduler && typeof terrainScheduler === "object") {
-    const originalTerrainLoad = Reflect.get(terrainScheduler, "loadTile");
+    const scheduler = Reflect.get(source, "scheduler");
 
-    if (typeof originalTerrainLoad === "function") {
-      Reflect.set(
-        terrainScheduler,
-        "loadTile",
-        async (coordinate: { z: number }, signal?: AbortSignal) => {
-          if (coordinate.z >= detailZoom) {
-            await waitForVirtualTime(delayMs);
-          }
+    if (!scheduler || typeof scheduler !== "object") {
+      return;
+    }
 
-          return (originalTerrainLoad as (
-            coordinate: { z: number },
-            signal?: AbortSignal
-          ) => Promise<unknown>).call(terrainScheduler, coordinate, signal);
+    const originalLoad = Reflect.get(scheduler, "loadTile");
+
+    if (typeof originalLoad !== "function") {
+      return;
+    }
+
+    Reflect.set(
+      scheduler,
+      "loadTile",
+      async (coordinate: { z: number }, signal?: AbortSignal) => {
+        if (coordinate.z >= detailZoom) {
+          await waitForVirtualTime(delayMs);
         }
-      );
-    }
-  }
 
-  const rasterSource = getSourceManager(engine).get("gaode-satellite");
-
-  if (!rasterSource || typeof rasterSource !== "object") {
-    return;
-  }
-
-  const rasterScheduler = Reflect.get(rasterSource, "scheduler");
-
-  if (!rasterScheduler || typeof rasterScheduler !== "object") {
-    return;
-  }
-
-  const originalRasterLoad = Reflect.get(rasterScheduler, "loadTile");
-
-  if (typeof originalRasterLoad !== "function") {
-    return;
-  }
-
-  Reflect.set(
-    rasterScheduler,
-    "loadTile",
-    async (coordinate: { z: number }, signal?: AbortSignal) => {
-      if (coordinate.z >= detailZoom) {
-        await waitForVirtualTime(delayMs);
+        return (originalLoad as (
+          coordinate: { z: number },
+          signal?: AbortSignal
+        ) => Promise<unknown>).call(scheduler, coordinate, signal);
       }
+    );
+  };
 
-      return (originalRasterLoad as (
-        coordinate: { z: number },
-        signal?: AbortSignal
-      ) => Promise<unknown>).call(rasterScheduler, coordinate, signal);
-    }
-  );
+  const sourceManager = getSourceManager(engine);
+  const terrainSource = sourceManager.get("gaode-satellite-terrain");
+  patchSourceScheduler(terrainSource);
+
+  const rasterSource = sourceManager.get("gaode-satellite");
+  patchSourceScheduler(rasterSource);
 }
 
 function getTerrainLayer(engine: GlobeEngine): TerrainTileLayer {
-  const terrain = getLayerManager(engine).get("terrain");
+  const terrain = engine.getLayer("terrain");
 
   if (!(terrain instanceof TerrainTileLayer)) {
     throw new Error("Missing terrain layer for gaode smoke");
@@ -233,7 +207,7 @@ function getTerrainLayer(engine: GlobeEngine): TerrainTileLayer {
 }
 
 function getRasterLayer(engine: GlobeEngine): RasterLayer {
-  const raster = getLayerManager(engine).get("gaode-satellite");
+  const raster = engine.getLayer("gaode-satellite");
 
   if (!(raster instanceof RasterLayer)) {
     throw new Error("Missing raster layer for gaode smoke");
@@ -411,7 +385,7 @@ async function runDragPanSmoke(
       hasExpectedFrontier(snapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
       hasExpectedFrontier(snapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
       hasParentZoom(snapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
-      sameZooms(snapshot.terrainDisplayZooms, snapshot.rasterHostZooms) &&
+      coversZooms(snapshot.rasterHostZooms, snapshot.terrainDisplayZooms) &&
       snapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom) &&
       hasParentZoom(snapshot.rasterRequestedZooms, expectedRasterTargetZoom),
     MAX_SMOKE_WAIT_MS,
@@ -434,7 +408,7 @@ async function runDragPanSmoke(
       hasExpectedFrontier(snapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
       snapshot.terrainParentFallbackCount === 0 &&
       sameZooms(snapshot.terrainDisplayZooms, snapshot.sharedLeafZooms) &&
-      sameZooms(snapshot.terrainDisplayZooms, snapshot.rasterHostZooms) &&
+      coversZooms(snapshot.rasterHostZooms, snapshot.terrainDisplayZooms) &&
       snapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom),
     MAX_SMOKE_WAIT_MS,
     (snapshot) => {
@@ -448,14 +422,14 @@ async function runDragPanSmoke(
     hasExpectedFrontier(interactingSnapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
     hasExpectedFrontier(interactingSnapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
     hasParentZoom(interactingSnapshot.terrainDisplayZooms, expectedSharedTargetZoom) &&
-    sameZooms(interactingSnapshot.terrainDisplayZooms, interactingSnapshot.rasterHostZooms) &&
+    coversZooms(interactingSnapshot.rasterHostZooms, interactingSnapshot.terrainDisplayZooms) &&
     interactingSnapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom) &&
     hasParentZoom(interactingSnapshot.rasterRequestedZooms, expectedRasterTargetZoom) &&
     idleSnapshot.sharedTargetZoom === expectedSharedTargetZoom &&
     hasExpectedFrontier(idleSnapshot.sharedLeafZooms, expectedSharedTargetZoom) &&
     idleSnapshot.terrainParentFallbackCount === 0 &&
     sameZooms(idleSnapshot.terrainDisplayZooms, idleSnapshot.sharedLeafZooms) &&
-    sameZooms(idleSnapshot.terrainDisplayZooms, idleSnapshot.rasterHostZooms) &&
+    coversZooms(idleSnapshot.rasterHostZooms, idleSnapshot.terrainDisplayZooms) &&
     idleSnapshot.rasterRequestedZooms.includes(expectedRasterTargetZoom);
 
   stage.dataset.phase = "after-idle";

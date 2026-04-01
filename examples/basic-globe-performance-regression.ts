@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
-import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
+import { GlobeEngine, TerrainTileLayer, TerrainTileSource, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
@@ -158,22 +158,26 @@ export function runBasicGlobePerformanceRegression(
     radius: 1,
     background: "#020611"
   });
+  const terrainSourceId = "basic-performance-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 2,
+    maxZoom: 10,
+    tileSize: 128,
+    cache: 96,
+    concurrency: 6,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
+      delayValue(16, () => createElevationTile(coordinate), signal)
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("basic-globe-performance-regression", {
-    terrain: {
-      tiles: ["memory://{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 2,
-      maxZoom: 10,
-      tileSize: 128,
-      cache: 96,
-    },
+    source: terrainSourceId,
     minMeshSegments: 3,
     maxMeshSegments: 3,
     skirtDepthMeters: 900,
     elevationExaggeration: 1,
-    zoomExaggerationBoost: 1.8,
-    loadElevationTile: async (coordinate, signal?: AbortSignal) =>
-      delayValue(16, () => createElevationTile(coordinate), signal)
+    zoomExaggerationBoost: 1.8
   });
   const rasterSourceId = "basic-performance-imagery";
   const rasterSource = new RasterTileSource(rasterSourceId, {

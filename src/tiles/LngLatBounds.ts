@@ -77,12 +77,8 @@ export function shouldRequestDemForCoordinate(
   coordinate: TileCoordinate,
   extraBounds: LngLatBounds[] | undefined
 ): boolean {
-  if (extraBounds === undefined) {
+  if (extraBounds === undefined || extraBounds.length === 0) {
     return true;
-  }
-
-  if (extraBounds.length === 0) {
-    return false;
   }
 
   const tileBounds = getWebMercatorTileBounds(coordinate);
@@ -96,4 +92,3 @@ export function shouldRequestDemForCoordinate(
 
   return false;
 }
-

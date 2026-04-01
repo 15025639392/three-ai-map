@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
-import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
+import { GlobeEngine, TerrainTileLayer, TerrainTileSource, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function setStageSize(stage: HTMLElement, width: number, height: number): void {
@@ -84,22 +84,13 @@ function createElevationTile(coordinate: TileCoordinate): ElevationTileData {
   };
 }
 
-function createTerrainLayer(layerId: string): TerrainTileLayer {
+function createTerrainLayer(layerId: string, sourceId: string): TerrainTileLayer {
   return new TerrainTileLayer(layerId, {
-    terrain: {
-      tiles: ["memory://{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 2,
-      maxZoom: 6,
-      tileSize: 128,
-      cache: 64,
-    },
+    source: sourceId,
     minMeshSegments: 2,
     maxMeshSegments: 2,
     skirtDepthMeters: 0,
-    elevationExaggeration: 0,
-    loadElevationTile: async (coordinate, signal?: AbortSignal) =>
-      delayValue(6, () => createElevationTile(coordinate), signal)
+    elevationExaggeration: 0
   });
 }
 
@@ -117,6 +108,19 @@ export function runSurfaceTileLifecycleStressRegression(
     radius: 1,
     background: "#020611"
   });
+  const terrainSourceId = "lifecycle-stress-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 2,
+    maxZoom: 6,
+    tileSize: 128,
+    cache: 64,
+    concurrency: 4,
+    loadTile: async (coordinate, signal?: AbortSignal) =>
+      delayValue(6, () => createElevationTile(coordinate), signal)
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const rasterSourceId = "lifecycle-stress-raster";
   const rasterSource = new RasterTileSource(rasterSourceId, {
     tiles: ["memory://{z}/{x}/{y}.png"],
@@ -184,7 +188,7 @@ export function runSurfaceTileLifecycleStressRegression(
 
   const runScenario = async (): Promise<void> => {
     for (let cycle = 1; cycle <= cycleCount; cycle += 1) {
-      const terrain = createTerrainLayer(layerId);
+      const terrain = createTerrainLayer(layerId, terrainSourceId);
       engine.addLayer(terrain);
       engine.setView({ lng: 8, lat: 26, altitude: 2.3 });
       await terrain.ready();

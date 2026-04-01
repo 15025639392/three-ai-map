@@ -1,6 +1,5 @@
-import { PerspectiveCamera, Raycaster, Scene } from "three";
+import { Object3D, PerspectiveCamera, Raycaster } from "three";
 import { Cartesian3Like, Cartographic } from "../geo/cartographic";
-import { GlobeMesh } from "../globe/GlobeMesh";
 import type { Source } from "../sources/Source";
 import type { SurfaceTilePlan } from "../tiles/SurfaceTilePlanner";
 import type { TerrainTileHost } from "./TerrainTileHost";
@@ -47,9 +46,8 @@ export interface LayerRecoveryOverrides {
 }
 
 export interface LayerContext {
-  scene: Scene;
+  scene: Object3D;
   camera: PerspectiveCamera;
-  globe: GlobeMesh;
   radius: number;
   rendererElement?: HTMLCanvasElement;
   requestRender?: () => void;

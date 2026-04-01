@@ -1,6 +1,6 @@
 import "../src/styles.css";
 import { BufferGeometry, Mesh } from "three";
-import { GlobeEngine, TerrainTileLayer } from "../src";
+import { GlobeEngine, TerrainTileLayer, TerrainTileSource } from "../src";
 
 interface TileCoordinate {
   z: number;
@@ -71,20 +71,24 @@ export function runSurfaceTileCoordTransformRegression(
     radius: 1,
     background: "#05101a"
   });
+  const terrainSourceId = "surface-coord-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: FIXED_COORDINATE.z,
+    maxZoom: FIXED_COORDINATE.z,
+    tileSize: 256,
+    cache: 4,
+    concurrency: 4,
+    loadTile: async () => createFlatElevationTile()
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const sharedOptions = {
-    terrain: {
-      tiles: ["memory://{z}/{x}/{y}.png"],
-      encode: "terrarium" as const,
-      minZoom: FIXED_COORDINATE.z,
-      maxZoom: FIXED_COORDINATE.z,
-      tileSize: 256,
-      cache: 4,
-    },
+    source: terrainSourceId,
     minMeshSegments: 4,
     maxMeshSegments: 4,
     skirtDepthMeters: 0,
-    textureUvInsetPixels: 0,
-    loadElevationTile: async () => createFlatElevationTile()
+    textureUvInsetPixels: 0
   };
   const noTransformLayer = new TerrainTileLayer("surface-coord-base", {
     ...sharedOptions

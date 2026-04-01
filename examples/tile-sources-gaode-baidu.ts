@@ -1,7 +1,6 @@
 import {
   GlobeEngine,
-  TerrainTileLayer,
-  RasterTileSource,
+  TerrainTileLayer, TerrainTileSource, RasterTileSource,
   RasterLayer,
   wgs84ToGcj02,
   wgs84ToBd09,
@@ -72,21 +71,24 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
     showInteractionAnchor: true
   });
 
+  const terrainSourceId = "gaode-satellite-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 3,
+    maxZoom: 14,
+    tileSize: 256,
+    cache: 128,
+    extraBounds: [],
+    concurrency: 6
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 3,
-      maxZoom: 14,
-      tileSize: 256,
-      cache: 128,
-      extraBounds: [] // Disable DEM outside configured bounds (Gaode imagery only).
-    },
+    source: terrainSourceId,
     maxMeshSegments: 3,
     minMeshSegments: 1,
-    concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
-    skirtDepthMeters: 500,
+    skirtDepthMeters: 500
   });
   const imagerySource = new RasterTileSource("gaode-satellite", {
     tiles: [GAODE_URLS.satellite],
@@ -99,14 +101,9 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
   engine.addSource("gaode-satellite", imagerySource);
   const imageryLayer = new RasterLayer({ id: "gaode-satellite", source: "gaode-satellite", zIndex: 100 });
 
-  // engine.addLayer(terrain);
+  engine.addLayer(terrain);
   engine.addLayer(imageryLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 }); // center of China
-
-  // terrain.ready().then(
-  //   () => { if (output) output.textContent = "Gaode satellite tiles loaded"; },
-  //   () => { if (output) output.textContent = "Gaode satellite tiles failed – check network"; },
-  // );
 
   if (output) output.textContent = "正在加载高德卫星...";
 
@@ -129,21 +126,24 @@ export function runGaodeSatelliteLabels(container: HTMLElement, output?: HTMLEle
     showInteractionAnchor: true
   });
 
+  const terrainSourceId = "gaode-satellite-labels-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 3,
+    maxZoom: 18,
+    tileSize: 256,
+    cache: 128,
+    extraBounds: [],
+    concurrency: 6
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 3,
-      maxZoom: 18,
-      tileSize: 256,
-      cache: 128,
-      extraBounds: []
-    },
+    source: terrainSourceId,
     minMeshSegments: 16,
     maxMeshSegments: 16,
-    concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
-    skirtDepthMeters: 500,
+    skirtDepthMeters: 500
   });
 
   const satelliteSource = new RasterTileSource("gaode-satellite-base", {
@@ -192,21 +192,24 @@ export function runGaodeRoad(container: HTMLElement, output?: HTMLElement): Glob
     showInteractionAnchor: true
   });
 
+  const terrainSourceId = "gaode-road-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 3,
+    maxZoom: 18,
+    tileSize: 256,
+    cache: 128,
+    extraBounds: [],
+    concurrency: 6
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 3,
-      maxZoom: 18,
-      tileSize: 256,
-      cache: 128,
-      extraBounds: []
-    },
+    source: terrainSourceId,
     minMeshSegments: 16,
     maxMeshSegments: 16,
-    concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToGcj02({ lng, lat }),
-    skirtDepthMeters: 500,
+    skirtDepthMeters: 500
   });
   const imagerySource = new RasterTileSource("gaode-road", {
     tiles: [GAODE_URLS.road],
@@ -248,21 +251,24 @@ export function runBaiduSatellite(container: HTMLElement, output?: HTMLElement):
     background: "#020611",
   });
 
+  const terrainSourceId = "baidu-satellite-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 3,
+    maxZoom: 18,
+    tileSize: 256,
+    cache: 128,
+    extraBounds: [],
+    concurrency: 6
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 3,
-      maxZoom: 18,
-      tileSize: 256,
-      cache: 128,
-      extraBounds: []
-    },
+    source: terrainSourceId,
     minMeshSegments: 16,
     maxMeshSegments: 16,
-    concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToBd09({ lng, lat }),
-    skirtDepthMeters: 500,
+    skirtDepthMeters: 500
   });
   const imagerySource = new RasterTileSource("baidu-satellite", {
     tiles: [BAIDU_URLS.satellite],
@@ -301,21 +307,24 @@ export function runBaiduRoad(container: HTMLElement, output?: HTMLElement): Glob
     background: "#f0ede8",
   });
 
+  const terrainSourceId = "baidu-road-terrain";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 3,
+    maxZoom: 18,
+    tileSize: 256,
+    cache: 128,
+    extraBounds: [],
+    concurrency: 6
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 3,
-      maxZoom: 18,
-      tileSize: 256,
-      cache: 128,
-      extraBounds: []
-    },
+    source: terrainSourceId,
     minMeshSegments: 16,
     maxMeshSegments: 16,
-    concurrency: 6,
     coordTransform: (lng, lat) => wgs84ToBd09({ lng, lat }),
-    skirtDepthMeters: 500,
+    skirtDepthMeters: 500
   });
   const imagerySource = new RasterTileSource("baidu-road", {
     tiles: [BAIDU_URLS.road],

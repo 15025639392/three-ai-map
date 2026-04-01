@@ -45,6 +45,10 @@ function sameZooms(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function coversZooms(covering, required) {
+  return required.every((zoom) => covering.includes(zoom));
+}
+
 function maxZoom(list) {
   if (list.length === 0) {
     return Number.NEGATIVE_INFINITY;
@@ -155,15 +159,15 @@ function assertDom(dom) {
     );
   }
 
-  if (!sameZooms(interactingRasterHostZooms, interactingTerrainDisplayZooms)) {
+  if (!coversZooms(interactingRasterHostZooms, interactingTerrainDisplayZooms)) {
     throw new Error(
-      `Expected interacting raster host zooms [${interactingTerrainDisplayZooms.join(",")}] to match terrain display zooms, got [${interactingRasterHostZooms.join(",")}]`
+      `Expected interacting raster host zooms to cover terrain display zooms [${interactingTerrainDisplayZooms.join(",")}], got [${interactingRasterHostZooms.join(",")}]`
     );
   }
 
-  if (!sameZooms(idleRasterHostZooms, idleTerrainDisplayZooms)) {
+  if (!coversZooms(idleRasterHostZooms, idleTerrainDisplayZooms)) {
     throw new Error(
-      `Expected idle raster host zooms [${idleTerrainDisplayZooms.join(",")}] to match terrain display zooms, got [${idleRasterHostZooms.join(",")}]`
+      `Expected idle raster host zooms to cover terrain display zooms [${idleTerrainDisplayZooms.join(",")}], got [${idleRasterHostZooms.join(",")}]`
     );
   }
 

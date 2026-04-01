@@ -1,6 +1,6 @@
 import "../src/styles.css";
-import { GlobeEngine, TerrainTileLayer, RasterLayer, RasterTileSource } from "../src";
-import type { ElevationTileData } from "../src/layers/TerrainTileLayer";
+import { GlobeEngine, TerrainTileLayer, TerrainTileSource, RasterLayer, RasterTileSource } from "../src";
+import type { ElevationTileData } from "../src";
 import type { TileCoordinate } from "../src/tiles/TileViewport";
 
 function createFlatElevationTile(): ElevationTileData {
@@ -95,21 +95,25 @@ export function runSurfaceTileZoomRegression(
     radius: 1,
     background: "#020611",
   });
+  const terrainSourceId = "terrain-source";
+  const terrainSource = new TerrainTileSource(terrainSourceId, {
+    tiles: ["memory://{z}/{x}/{y}.png"],
+    encode: "terrarium",
+    minZoom: 2,
+    maxZoom: 9,
+    tileSize: 128,
+    cache: 64,
+    concurrency: 4,
+    loadTile: async (_coordinate, signal?: AbortSignal) =>
+      delayValue(18, () => createFlatElevationTile(), signal)
+  });
+  engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
-    terrain: {
-      tiles: ["memory://{z}/{x}/{y}.png"],
-      encode: "terrarium",
-      minZoom: 2,
-      maxZoom: 9,
-      tileSize: 128,
-      cache: 64,
-    },
+    source: terrainSourceId,
     minMeshSegments: 2,
     maxMeshSegments: 2,
     skirtDepthMeters: 0,
-    elevationExaggeration: 0,
-    loadElevationTile: async (_coordinate, signal?: AbortSignal) =>
-      delayValue(18, () => createFlatElevationTile(), signal),
+    elevationExaggeration: 0
   });
   const rasterSource = new RasterTileSource("raster", {
     tiles: ["memory://{z}/{x}/{y}.png"],

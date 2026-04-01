@@ -42,8 +42,7 @@ interface RasterTileEntry {
   composedContext: CanvasRenderingContext2D | null;
   transitionElapsedMs: number;
   previousTransitionElapsedMs: number;
-  transitionState: "none" | "fadeIn" | "fadeOut";
-  keepUntilFadeOut: boolean;
+  transitionState: "none" | "fadeIn";
 }
 
 interface SourceCropRegion {
@@ -917,56 +916,40 @@ export class RasterLayer extends Layer {
       desiredPlans.map((plan) => [plan.hostTileKey, plan] as const)
     );
 
-    for (const key of [...this.activeTiles.keys()]) {
-      if (!desiredEntries.has(key)) {
-        this.markTileFadingOut(key);
-      }
-    }
-
     for (const plan of desiredEntries.values()) {
       if (host && !host.getActiveTileMesh(plan.hostTileKey)) {
         continue;
       }
 
-      const existing = this.activeTiles.get(plan.hostTileKey);
-
-      if (existing?.keepUntilFadeOut) {
-        existing.keepUntilFadeOut = false;
-        existing.transitionState = existing.mesh ? "fadeIn" : "none";
-        existing.transitionElapsedMs = 0;
-      }
-
       void this.ensureTile(plan);
     }
-  }
 
-  private markTileFadingOut(tileKey: string): void {
-    const entry = this.activeTiles.get(tileKey);
+    const removableTileKeys: string[] = [];
+    for (const [tileKey, entry] of this.activeTiles) {
+      if (desiredEntries.has(tileKey)) {
+        continue;
+      }
 
-    if (!entry) {
-      return;
+      if (this.shouldRetainAsAncestorFallback(tileKey, desiredEntries)) {
+        if (entry.mesh) {
+          this.setMeshOpacity(entry.mesh, 1);
+        }
+        continue;
+      }
+
+      removableTileKeys.push(tileKey);
     }
 
-    if (entry.keepUntilFadeOut) {
-      return;
-    }
-
-    entry.keepUntilFadeOut = true;
-    entry.transitionElapsedMs = 0;
-    entry.transitionState = entry.mesh ? "fadeOut" : "none";
-    if (!entry.mesh) {
+    for (const tileKey of removableTileKeys) {
       this.removeTile(tileKey);
-      return;
     }
-
-    this.context?.requestRender?.();
   }
 
   private stepTransitions(deltaTime: number): boolean {
     const safeDelta = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
     let updated = false;
 
-    for (const [tileKey, entry] of this.activeTiles) {
+    for (const entry of this.activeTiles.values()) {
       if (entry.previousMesh) {
         entry.previousTransitionElapsedMs += safeDelta;
         const fadeOutFactor = Math.max(
@@ -985,10 +968,6 @@ export class RasterLayer extends Layer {
       }
 
       if (!entry.mesh) {
-        if (entry.keepUntilFadeOut) {
-          this.removeTile(tileKey);
-          updated = true;
-        }
         continue;
       }
 
@@ -1001,22 +980,38 @@ export class RasterLayer extends Layer {
           entry.transitionState = "none";
           entry.transitionElapsedMs = 0;
         }
-      } else if (entry.transitionState === "fadeOut" && entry.keepUntilFadeOut) {
-        entry.transitionElapsedMs += safeDelta;
-        const fadeOutFactor = Math.max(
-          0,
-          1 - entry.transitionElapsedMs / RASTER_CROSSFADE_DURATION_MS
-        );
-        updated = this.setMeshOpacity(entry.mesh, fadeOutFactor) || updated;
-
-        if (fadeOutFactor <= RASTER_CROSSFADE_EPSILON) {
-          this.removeTile(tileKey);
-          updated = true;
-        }
       }
     }
 
     return updated;
+  }
+
+  private shouldRetainAsAncestorFallback(
+    tileKey: string,
+    desiredEntries: ReadonlyMap<string, RasterTilePlan>
+  ): boolean {
+    const ancestorCoordinate = parseTileKey(tileKey);
+
+    for (const [desiredKey] of desiredEntries) {
+      if (desiredKey === tileKey) {
+        continue;
+      }
+
+      const desiredCoordinate = parseTileKey(desiredKey);
+      if (
+        desiredCoordinate.z <= ancestorCoordinate.z ||
+        !isCoordinateWithinHost(desiredCoordinate, ancestorCoordinate)
+      ) {
+        continue;
+      }
+
+      const desiredEntry = this.activeTiles.get(desiredKey);
+      if (!desiredEntry?.mesh) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private setMeshOpacity(
@@ -1052,14 +1047,13 @@ export class RasterLayer extends Layer {
         composedContext: null,
         transitionElapsedMs: 0,
         previousTransitionElapsedMs: 0,
-        transitionState: "none",
-        keepUntilFadeOut: false
+        transitionState: "none"
       };
       this.activeTiles.set(plan.hostTileKey, entry);
     }
 
     if (entry.requestKey === plan.requestKey && (entry.loading || entry.mesh)) {
-      if (!entry.keepUntilFadeOut && entry.transitionState === "none" && entry.mesh) {
+      if (entry.transitionState === "none" && entry.mesh) {
         this.setMeshOpacity(entry.mesh, plan.morphFactor);
       }
       return entry.promise;
@@ -1292,7 +1286,6 @@ export class RasterLayer extends Layer {
     entry.transitionState = initialOpacityFactor < 1 - RASTER_CROSSFADE_EPSILON || entry.previousMesh
       ? "fadeIn"
       : "none";
-    entry.keepUntilFadeOut = false;
   }
 
   private startDetailRequests(
