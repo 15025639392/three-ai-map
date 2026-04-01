@@ -1,7 +1,7 @@
 ## 1) 会话快照
 - 任务标题：基于知识库重构地球引擎（删旧、收敛、保持代码干净）
 - 技能类型：`迁移`
-- 当前阶段：`知识库完善完成，准备实施`
+- 当前阶段：`知识库补充完成（16章）`
 - 更新时间：2026-04-01
 - 负责人：Codex
 - 断点文件路径：/Users/ldy/Desktop/map/three-map/docs/checkpoints/migration-3dtilesrendererjs-cesium-to-globe-engine-knowledge.md
@@ -20,6 +20,13 @@
   - [x] 补全 `knowledge/07-3dtilesrendererjs-runtime-plugin.md`
   - [x] 补全 `knowledge/08-complete-engine-blueprint.md`
   - [x] 补全 `knowledge/09-validation-checklist.md`
+  - [x] 补充 `knowledge/10-threejs-rendering-integration.md`
+  - [x] 补充 `knowledge/11-custom-shaders-and-materials.md`
+  - [x] 补充 `knowledge/12-performance-optimization-patterns.md`
+  - [x] 补充 `knowledge/13-error-handling-and-recovery.md`
+  - [x] 补充 `knowledge/14-worker-concurrency-patterns.md`
+  - [x] 补充 `knowledge/15-testing-strategies.md`
+  - [x] 补充 `knowledge/16-practical-code-examples.md`
 - 进行中：
   - [ ] 无
 - 下一步（唯一）：
@@ -44,17 +51,24 @@
 
 ## 5) 变更与证据
 - 本轮修改：
-  - `knowledge/09-validation-checklist.md`（重写补全）
+  - `knowledge/10-threejs-rendering-integration.md`（新增）
+  - `knowledge/11-custom-shaders-and-materials.md`（新增）
+  - `knowledge/12-performance-optimization-patterns.md`（新增）
+  - `knowledge/13-error-handling-and-recovery.md`（新增）
+  - `knowledge/14-worker-concurrency-patterns.md`（新增）
+  - `knowledge/15-testing-strategies.md`（新增）
+  - `knowledge/16-practical-code-examples.md`（新增）
+  - `knowledge/README.md`（更新阅读顺序）
   - `docs/checkpoints/migration-3dtilesrendererjs-cesium-to-globe-engine-knowledge.md`（续跑状态更新）
 - 产出要点：
-  - 补全验证清单，与第8章蓝图的14个模块对应
-  - 每个模块有具体的验证点和关键指标
-  - 提供详细的验证方法与工具指导
-  - 包含完整的验收标准和验证流程
+  - 补充Three.js渲染集成、自定义着色器、性能优化等7个章节
+  - 知识库从9章扩展到16章，覆盖从架构到实现的完整链路
+  - 每个新增章节包含实际代码示例和最佳实践
 
 ## 6) 风险与阻塞
 - 风险：
-  - 知识库完善后，实施阶段可能遇到技术挑战，需要定期评审和调整
+  - 知识库已完善，实施阶段可能遇到技术挑战，需要定期评审和调整
+  - 新增章节需要与实际代码保持同步更新
 - 阻塞：
   - 无
 - 需要谁确认：

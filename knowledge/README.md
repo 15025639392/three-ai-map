@@ -9,6 +9,7 @@
 
 ## 阅读顺序
 
+### 第一部分：架构基础（Cesium/3DTilesRendererJS经验）
 1. `01-cesium-surface-architecture.md`
 2. `02-quadtree-sse-selection.md`
 3. `03-terrain-imagery-decoupling.md`
@@ -16,8 +17,19 @@
 5. `05-crack-transition-stability.md`
 6. `06-coordinate-system-and-precision.md`
 7. `07-3dtilesrendererjs-runtime-plugin.md`
+
+### 第二部分：完整蓝图与验证
 8. `08-complete-engine-blueprint.md`
 9. `09-validation-checklist.md`
+
+### 第三部分：Three.js实现细节
+10. `10-threejs-rendering-integration.md`
+11. `11-custom-shaders-and-materials.md`
+12. `12-performance-optimization-patterns.md`
+13. `13-error-handling-and-recovery.md`
+14. `14-worker-concurrency-patterns.md`
+15. `15-testing-strategies.md`
+16. `16-practical-code-examples.md`
 
 ## 结论
 
