@@ -101,7 +101,7 @@ export function runGaodeSatellite(container: HTMLElement, output?: HTMLElement):
   engine.addSource("gaode-satellite", imagerySource);
   const imageryLayer = new RasterLayer({ id: "gaode-satellite", source: "gaode-satellite", zIndex: 100 });
 
-  // engine.addLayer(terrain);
+  engine.addLayer(terrain);
   engine.addLayer(imageryLayer);
   engine.setView({ lng: 104.07, lat: 35.44, altitude: 2.8 }); // center of China
 

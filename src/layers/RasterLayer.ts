@@ -19,7 +19,7 @@ import { planSurfaceTileNodes, type SurfaceTileInteractionPhase } from "../tiles
 import type { TileSource } from "../tiles/tileLoader";
 import { getSurfaceTileBounds } from "../tiles/SurfaceTileTree";
 import { Layer, LayerContext } from "./Layer";
-import { RasterGpuComposer } from "./RasterGpuComposer";
+import { GpuTileDrawItem, RasterGpuComposer } from "./RasterGpuComposer";
 
 export interface RasterLayerOptions {
   id: string;
@@ -41,6 +41,8 @@ interface RasterTileEntry {
   requestedImageryTileKeys: string[];
   version: number;
   composedTarget: WebGLRenderTarget | null;
+  pendingDetailDraws: GpuTileDrawItem[];
+  detailFlushScheduled: boolean;
 }
 
 interface SourceCropRegion {
@@ -999,7 +1001,9 @@ export class RasterLayer extends Layer {
         requestKey: "",
         requestedImageryTileKeys: [],
         version: 0,
-        composedTarget: null
+        composedTarget: null,
+        pendingDetailDraws: [],
+        detailFlushScheduled: false
       };
       this.activeTiles.set(plan.hostTileKey, entry);
     }
@@ -1389,6 +1393,8 @@ export class RasterLayer extends Layer {
       entry.composedTarget = null;
     }
 
+    entry.pendingDetailDraws.length = 0;
+    entry.detailFlushScheduled = false;
     entry.mesh = mesh;
     entry.composedTarget = target;
     this.group.add(mesh);
@@ -1429,11 +1435,10 @@ export class RasterLayer extends Layer {
           }
 
           try {
-            this.getGpuComposer(context).drawTile(activeEntry.composedTarget, {
+            this.enqueueDetailDraw(activeEntry, {
               request,
               source: tileSource
             });
-            this.context?.requestRender?.();
           } catch (renderError) {
             this.emitLayerError(this.context, {
               stage: "imagery",
@@ -1623,6 +1628,8 @@ export class RasterLayer extends Layer {
       entry.composedTarget = null;
     }
 
+    entry.pendingDetailDraws.length = 0;
+    entry.detailFlushScheduled = false;
     this.activeTiles.delete(tileKey);
     return true;
   }
@@ -1631,6 +1638,54 @@ export class RasterLayer extends Layer {
     for (const key of [...this.activeTiles.keys()]) {
       this.removeTile(key);
     }
+  }
+
+  private enqueueDetailDraw(entry: RasterTileEntry, draw: GpuTileDrawItem): void {
+    entry.pendingDetailDraws.push(draw);
+
+    if (entry.detailFlushScheduled) {
+      return;
+    }
+
+    entry.detailFlushScheduled = true;
+    window.setTimeout(() => {
+      entry.detailFlushScheduled = false;
+
+      const activeEntry = this.activeTiles.get(entry.hostTileKey);
+      if (activeEntry !== entry || !entry.mesh || !entry.composedTarget) {
+        entry.pendingDetailDraws.length = 0;
+        return;
+      }
+
+      if (entry.pendingDetailDraws.length === 0) {
+        return;
+      }
+
+      const context = this.context;
+      if (!context) {
+        entry.pendingDetailDraws.length = 0;
+        return;
+      }
+
+      const draws = entry.pendingDetailDraws.splice(0, entry.pendingDetailDraws.length);
+      try {
+        this.getGpuComposer(context).drawTiles(entry.composedTarget, draws);
+        this.context?.requestRender?.();
+      } catch (error) {
+        this.emitLayerError(this.context, {
+          stage: "imagery",
+          category: "render",
+          severity: "warn",
+          error,
+          recoverable: true,
+          metadata: {
+            source: this.sourceId,
+            hostTileKey: entry.hostTileKey,
+            drawCount: draws.length
+          }
+        });
+      }
+    }, 0);
   }
 
   private disposeRasterGeometry(geometry: BufferGeometry): void {
