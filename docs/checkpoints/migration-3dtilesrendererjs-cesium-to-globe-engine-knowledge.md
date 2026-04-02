@@ -1,7 +1,7 @@
 ## 1) 会话快照
 - 任务标题：基于知识库重构地球引擎（删旧、收敛、保持代码干净）
 - 技能类型：`迁移`
-- 当前阶段：`知识库补充完成（16章）`
+- 当前阶段：`知识库完成（25章）`
 - 更新时间：2026-04-01
 - 负责人：Codex
 - 断点文件路径：/Users/ldy/Desktop/map/three-map/docs/checkpoints/migration-3dtilesrendererjs-cesium-to-globe-engine-knowledge.md
@@ -27,10 +27,27 @@
   - [x] 补充 `knowledge/14-worker-concurrency-patterns.md`
   - [x] 补充 `knowledge/15-testing-strategies.md`
   - [x] 补充 `knowledge/16-practical-code-examples.md`
+  - [x] 补充 `knowledge/17-webgl-rendering-pipeline.md`（多Pass内存优化）
+  - [x] 补充 `knowledge/18-texture-gpu-management.md`
+  - [x] 补充 `knowledge/19-ellipsoid-geodesy.md`
+  - [x] 补充 `knowledge/20-atmosphere-lighting.md`
+  - [x] 补充 `knowledge/21-water-rendering.md`
+  - [x] 补充 `knowledge/22-camera-system-deep-dive.md`（精度抖动、防钻地）
+  - [x] 补充 `knowledge/23-public-api-contract.md`
+    - setView/flyTo 支持 zoom
+    - flyTo 支持 Promise 回调
+    - 贴地/相对高度
+    - 渐变线
+    - 坐标系支持（高德/百度/天地图/4326）
+    - 请求加工（签名/加密/Token）
+  - [x] 补充 `knowledge/24-vector-tile-rendering.md`
+  - [x] 补充 `knowledge/25-advanced-features.md`（GPU拾取/手势/后处理/日夜/云层）
+  - [x] 创建详细实施计划 `docs/plans/globe-engine-implementation-plan.md`（惰性帧架构）
+  - [x] 创建矢量瓦片迁移方案 `docs/plans/mapbox-vector-tile-migration-plan.md`
 - 进行中：
   - [ ] 无
 - 下一步（唯一）：
-  - [ ] 知识库完善完成，创建详细实施计划（基于第8章蓝图）
+  - [ ] 开始实施代码（按 P0 计划）
 
 ## 3) 范围与专项状态
 - in-scope：
@@ -51,31 +68,30 @@
 
 ## 5) 变更与证据
 - 本轮修改：
-  - `knowledge/10-threejs-rendering-integration.md`（新增）
-  - `knowledge/11-custom-shaders-and-materials.md`（新增）
-  - `knowledge/12-performance-optimization-patterns.md`（新增）
-  - `knowledge/13-error-handling-and-recovery.md`（新增）
-  - `knowledge/14-worker-concurrency-patterns.md`（新增）
-  - `knowledge/15-testing-strategies.md`（新增）
-  - `knowledge/16-practical-code-examples.md`（新增）
-  - `knowledge/README.md`（更新阅读顺序）
-  - `docs/checkpoints/migration-3dtilesrendererjs-cesium-to-globe-engine-knowledge.md`（续跑状态更新）
+  - `knowledge/17-webgl-rendering-pipeline.md`（新增：多Pass内存优化策略）
+  - `knowledge/21-water-rendering.md`（新增：水面渲染）
+  - `knowledge/24-vector-tile-rendering.md`（新增：矢量瓦片渲染）
+  - `knowledge/25-advanced-features.md`（新增：GPU拾取/手势/后处理/日夜/云层）
+  - `knowledge/23-public-api-contract.md`（更新：坐标系支持、请求加工）
+  - `knowledge/README.md`（更新：新增章节）
 - 产出要点：
-  - 补充Three.js渲染集成、自定义着色器、性能优化等7个章节
-  - 知识库从9章扩展到16章，覆盖从架构到实现的完整链路
-  - 每个新增章节包含实际代码示例和最佳实践
+  - 知识库扩展到 25 章，覆盖完整地球引擎
+  - API 支持高德/百度/天地图/4326 坐标系
+  - API 支持请求加工（签名/加密/Token）
+  - 新增高级功能：GPU拾取、手势、后处理、日夜交替、云层
+  - 多Pass架构内存优化策略
 
 ## 6) 风险与阻塞
 - 风险：
-  - 知识库已完善，实施阶段可能遇到技术挑战，需要定期评审和调整
-  - 新增章节需要与实际代码保持同步更新
+  - 实施周期较长，需持续跟踪
+  - 多Pass架构内存优化需要实际测试验证
 - 阻塞：
   - 无
 - 需要谁确认：
-  - 用户确认是否开始创建详细实施计划
+  - 用户确认开始实施代码
 
 ## 7) 续跑指令（下次直接用）
 - 最短命令：
   - `续跑:/Users/ldy/Desktop/map/three-map/docs/checkpoints/migration-3dtilesrendererjs-cesium-to-globe-engine-knowledge.md 不保留旧兼容代码,保持代码干净。`
 - 建议提示词（长版）：
-  - `继续这个任务，先读取 checkpoint，按“下一步（唯一）”创建详细实施计划，并在结束后回写 checkpoint。 不保留旧兼容代码,保持代码干净。`
+  - `继续这个任务，先读取 checkpoint，按“下一步（唯一）”确认矢量瓦片迁移方案后开始实施，并在结束后回写 checkpoint。 不保留旧兼容代码,保持代码干净。`
