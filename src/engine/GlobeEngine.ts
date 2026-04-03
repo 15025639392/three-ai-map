@@ -13,7 +13,7 @@ import {
   RendererAdapter
 } from "./EngineOptions";
 import { AtmosphereMesh } from "../globe/AtmosphereMesh";
-import { GlobeMesh } from "../globe/GlobeMesh";
+import { GlobeMesh } from "../scene/GlobeMesh";
 import { Starfield } from "../globe/Starfield";
 import {
   Layer,

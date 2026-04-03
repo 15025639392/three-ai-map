@@ -10,6 +10,9 @@ export type {
 } from "./engine/EngineOptions";
 export { CameraController } from "./camera/CameraController";
 export type { CameraViewUpdate } from "./camera/CameraController";
+export { RendererSystem } from "./scene/RendererSystem";
+export type { RendererSystemOptions } from "./scene/RendererSystem";
+export { GlobeMesh, createGlobeMesh } from "./scene/GlobeMesh";
 
 // Layers
 export { Layer } from "./layers/Layer";
