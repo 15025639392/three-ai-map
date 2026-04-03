@@ -244,6 +244,18 @@ export class SurfaceSystem {
     return count;
   }
 
+  getActiveTerrainTileCount(): number {
+    return this.terrainLayer?.getDebugStats().activeTileCount ?? 0;
+  }
+
+  getTerrainRequestCount(): number {
+    return this.terrainLayer?.getDebugStats().elevation.requested ?? 0;
+  }
+
+  getTerrainDecodeFallbackCount(): number {
+    return this.terrainLayer?.getDebugStats().terrariumDecode.fallbackCount ?? 0;
+  }
+
   getImageryRequestCount(sourceId?: string): number {
     let count = 0;
     const countedSourceIds = new Set<string>();

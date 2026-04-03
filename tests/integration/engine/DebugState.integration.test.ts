@@ -11,6 +11,13 @@ describe("DebugState", () => {
 
     expect(debugState.fps).toBeGreaterThanOrEqual(0);
     expect(debugState.frameTimeMs).toBeGreaterThanOrEqual(0);
+    expect(debugState.activeTerrainTiles).toBeGreaterThanOrEqual(0);
+    expect(debugState.terrainRequestCount).toBeGreaterThanOrEqual(0);
+    expect(debugState.terrainDecodeFallbackCount).toBeGreaterThanOrEqual(0);
+    expect(debugState.errorCount).toBeGreaterThanOrEqual(0);
+    expect(debugState.recoveryPolicyQueryCount).toBeGreaterThanOrEqual(0);
+    expect(debugState.recoveryPolicyHitCount).toBeGreaterThanOrEqual(0);
+    expect(debugState.recoveryPolicyRuleHitCount).toBeGreaterThanOrEqual(0);
 
     engine.dispose();
   });

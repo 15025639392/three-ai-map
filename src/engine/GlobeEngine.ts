@@ -2,6 +2,7 @@ import { Group, Raycaster, Vector2 } from "three";
 import { CameraController } from "../core/CameraController";
 import { InteractionAnchorOverlay } from "../core/InteractionAnchorOverlay";
 import { SceneSystem } from "../core/SceneSystem";
+import { DebugOverlay } from "../diagnostics/DebugOverlay";
 import { type DebugState } from "../diagnostics/DebugState";
 import { PerformanceMonitor, type PerformanceReport } from "../diagnostics/PerformanceMonitor";
 import { cartesianToCartographic } from "../geo/projection";
@@ -79,6 +80,7 @@ export class GlobeEngine {
   private readonly overlayRoot = new Group();
   private readonly sourceManager: SourceManager;
   private readonly interactionAnchorOverlay: InteractionAnchorOverlay | null;
+  private readonly debugOverlay: DebugOverlay | null;
   private readonly showBaseGlobe: boolean;
   private readonly recoveryPolicyDefaults: LayerRecoveryOverrides;
   private readonly recoveryPolicyRules: GlobeEngineRecoveryRule[];
@@ -105,6 +107,7 @@ export class GlobeEngine {
     background = "#03060d",
     showBaseGlobe = true,
     showInteractionAnchor = false,
+    showDebugOverlay = false,
     camera,
     recoveryPolicy,
     rendererFactory = createDefaultRenderer
@@ -182,6 +185,7 @@ export class GlobeEngine {
     this.interactionAnchorOverlay = showInteractionAnchor
       ? new InteractionAnchorOverlay(this.container)
       : null;
+    this.debugOverlay = showDebugOverlay ? new DebugOverlay(this.container) : null;
 
     this.resize();
     this.setView({ lng: 0, lat: 20, altitude: radius * 2.2 });
@@ -239,6 +243,7 @@ export class GlobeEngine {
     this.performanceMonitor.trackMetric("layerCount", this.layerRegistry.size);
     this.performanceMonitor.trackMetric("sceneObjectCount", this.sceneSystem.scene.children.length);
     this.performanceMonitor.trackMetric("cameraAltitude", this.getView().altitude);
+    this.debugOverlay?.update(this.getDebugState());
   }
 
   addLayer(layer: Layer): void {
@@ -332,8 +337,15 @@ export class GlobeEngine {
       fps: metrics.fps,
       frameTimeMs: metrics.frameTimeMs,
       activeImageryTiles: this.surfaceSystem.getVisibleImageryTileCount(),
+      activeTerrainTiles: this.surfaceSystem.getActiveTerrainTileCount(),
       visibleTiles: this.surfaceSystem.getVisibleTileCount(),
-      imageryRequestCount: this.surfaceSystem.getImageryRequestCount()
+      imageryRequestCount: this.surfaceSystem.getImageryRequestCount(),
+      terrainRequestCount: this.surfaceSystem.getTerrainRequestCount(),
+      terrainDecodeFallbackCount: this.surfaceSystem.getTerrainDecodeFallbackCount(),
+      errorCount: this.errorCount,
+      recoveryPolicyQueryCount: this.recoveryPolicyQueryCount,
+      recoveryPolicyHitCount: this.recoveryPolicyHitCount,
+      recoveryPolicyRuleHitCount: this.recoveryPolicyRuleHitCount
     };
   }
 
@@ -465,6 +477,7 @@ export class GlobeEngine {
     this.applyBaseGlobeTerrainInset();
     this.cameraController.dispose();
     this.interactionAnchorOverlay?.destroy();
+    this.debugOverlay?.destroy();
     this.atmosphere.dispose();
     this.starfield.dispose();
     this.globe.dispose();

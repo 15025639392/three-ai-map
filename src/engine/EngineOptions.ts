@@ -49,6 +49,7 @@ export interface GlobeEngineOptions {
   background?: string;
   showBaseGlobe?: boolean;
   showInteractionAnchor?: boolean;
+  showDebugOverlay?: boolean;
   camera?: Partial<Pick<PerspectiveCamera, "fov" | "near" | "far">>;
   recoveryPolicy?: GlobeEngineRecoveryPolicy;
   rendererFactory?: (options: RendererFactoryOptions) => RendererAdapter;
