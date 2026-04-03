@@ -241,6 +241,9 @@ export class GlobeEngine {
     this.performanceMonitor.update(deltaTime);
     this.performanceMonitor.trackMetric("renderCount", this.renderCount);
     this.performanceMonitor.trackMetric("errorCount", this.errorCount);
+    this.performanceMonitor.trackMetric("recoveryPolicyQueryCount", this.recoveryPolicyQueryCount);
+    this.performanceMonitor.trackMetric("recoveryPolicyHitCount", this.recoveryPolicyHitCount);
+    this.performanceMonitor.trackMetric("recoveryPolicyRuleHitCount", this.recoveryPolicyRuleHitCount);
     this.performanceMonitor.trackMetric("layerCount", this.layerRegistry.size);
     this.performanceMonitor.trackMetric("sceneObjectCount", this.sceneSystem.scene.children.length);
     this.performanceMonitor.trackMetric("cameraAltitude", this.getView().altitude);

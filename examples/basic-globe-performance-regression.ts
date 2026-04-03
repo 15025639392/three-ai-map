@@ -245,6 +245,11 @@ export function runBasicGlobePerformanceRegression(
     container.dataset.polylineCount = `${polylineCount}`;
     container.dataset.polygonCount = `${polygonCount}`;
     container.dataset.usedJsHeapSize = `${report.memory?.usedJSHeapSize ?? "na"}`;
+    container.dataset.metricsScenario = "basic-performance";
+    container.dataset.metricsAverageFps = `${averageFPS}`;
+    container.dataset.metricsFrameDrops = `${report.frameDrops}`;
+    container.dataset.metricsImageryRequested = `${rasterStats.requested}`;
+    container.dataset.metricsRenderCount = `${renderCount}`;
     output.textContent = `after-basic-performance:${container.dataset.afterTiles || "none"}:fps=${averageFPS}:cancel=${imageryCancelRatio}`;
   };
 
@@ -267,6 +272,11 @@ export function runBasicGlobePerformanceRegression(
   container.dataset.polylineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.usedJsHeapSize = "";
+  container.dataset.metricsScenario = "";
+  container.dataset.metricsAverageFps = "";
+  container.dataset.metricsFrameDrops = "";
+  container.dataset.metricsImageryRequested = "";
+  container.dataset.metricsRenderCount = "";
   output.textContent = "启动中:basic-globe-performance-regression";
 
   engine.addLayer(terrain);

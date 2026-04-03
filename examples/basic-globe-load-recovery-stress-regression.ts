@@ -615,6 +615,11 @@ export function runBasicGlobeLoadRecoveryStressRegression(
       setDataAttribute(container, "polylineCount", polylineCount);
       setDataAttribute(container, "polygonCount", polygonCount);
       setDataAttribute(container, "allExpected", allExpected);
+      setDataAttribute(container, "metricsScenario", "basic-load-recovery-stress");
+      setDataAttribute(container, "metricsAverageFps", recoveryAverageFpsMax);
+      setDataAttribute(container, "metricsFrameDrops", recoveryFrameDropsMax);
+      setDataAttribute(container, "metricsImageryRequested", recoveryImageryRequestedTotal);
+      setDataAttribute(container, "metricsRenderCount", Math.max(...recoveryMetricsByCycle.map((metrics) => metrics.renderCount)));
       output.textContent = `after-load-recovery-stress:${recoveryAfterTiles || "none"}:layerRecovered=${layerRecoveredCount}/${cycleCount}:sceneRecovered=${sceneObjectRecoveredCount}/${cycleCount}`;
     } catch (error) {
       handleError(error);
@@ -662,6 +667,11 @@ export function runBasicGlobeLoadRecoveryStressRegression(
   container.dataset.polylineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.allExpected = "";
+  container.dataset.metricsScenario = "";
+  container.dataset.metricsAverageFps = "";
+  container.dataset.metricsFrameDrops = "";
+  container.dataset.metricsImageryRequested = "";
+  container.dataset.metricsRenderCount = "";
   output.textContent = "启动中:basic-globe-load-recovery-stress-regression";
 
   engine.addLayer(terrain);

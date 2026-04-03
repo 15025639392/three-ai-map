@@ -541,6 +541,11 @@ export function runBasicGlobeLoadLadderRegression(
       setDataAttribute(container, "polylineCount", polylineCount);
       setDataAttribute(container, "polygonCount", polygonCount);
       setDataAttribute(container, "allExpected", allExpected);
+      setDataAttribute(container, "metricsScenario", "basic-load-ladder");
+      setDataAttribute(container, "metricsAverageFps", heavyMetrics.averageFPS);
+      setDataAttribute(container, "metricsFrameDrops", heavyMetrics.frameDrops);
+      setDataAttribute(container, "metricsImageryRequested", heavyMetrics.imageryRequested);
+      setDataAttribute(container, "metricsRenderCount", heavyMetrics.renderCount);
       output.textContent = `after-load-ladder:${heavyAfterTiles || "none"}:sceneMono=${sceneObjectMonotonic}:ratio=${heavyBaselineFpsRatio}`;
     } catch (error) {
       handleError(error);
@@ -580,6 +585,11 @@ export function runBasicGlobeLoadLadderRegression(
   container.dataset.polylineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.allExpected = "";
+  container.dataset.metricsScenario = "";
+  container.dataset.metricsAverageFps = "";
+  container.dataset.metricsFrameDrops = "";
+  container.dataset.metricsImageryRequested = "";
+  container.dataset.metricsRenderCount = "";
   output.textContent = "启动中:basic-globe-load-ladder-regression";
 
   engine.addLayer(terrain);

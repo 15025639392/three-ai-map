@@ -533,6 +533,11 @@ export function runBasicGlobeLoadRecoveryRegression(
       setDataAttribute(container, "polylineCount", polylineCount);
       setDataAttribute(container, "polygonCount", polygonCount);
       setDataAttribute(container, "allExpected", allExpected);
+      setDataAttribute(container, "metricsScenario", "basic-load-recovery");
+      setDataAttribute(container, "metricsAverageFps", recoveryMetrics.averageFPS);
+      setDataAttribute(container, "metricsFrameDrops", recoveryMetrics.frameDrops);
+      setDataAttribute(container, "metricsImageryRequested", recoveryMetrics.imageryRequested);
+      setDataAttribute(container, "metricsRenderCount", recoveryMetrics.renderCount);
       output.textContent = `after-load-recovery:${recoveryAfterTiles || "none"}:layerRecovered=${layerRecovered}:sceneRecovered=${sceneObjectRecovered}`;
     } catch (error) {
       handleError(error);
@@ -573,6 +578,11 @@ export function runBasicGlobeLoadRecoveryRegression(
   container.dataset.polylineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.allExpected = "";
+  container.dataset.metricsScenario = "";
+  container.dataset.metricsAverageFps = "";
+  container.dataset.metricsFrameDrops = "";
+  container.dataset.metricsImageryRequested = "";
+  container.dataset.metricsRenderCount = "";
   output.textContent = "启动中:basic-globe-load-recovery-regression";
 
   engine.addLayer(terrain);

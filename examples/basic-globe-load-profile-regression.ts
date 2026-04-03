@@ -457,6 +457,11 @@ export function runBasicGlobeLoadProfileRegression(
       setDataAttribute(container, "polylineCount", polylineCount);
       setDataAttribute(container, "polygonCount", polygonCount);
       setDataAttribute(container, "allExpected", allExpected);
+      setDataAttribute(container, "metricsScenario", "basic-load-profile");
+      setDataAttribute(container, "metricsAverageFps", stressMetrics.averageFPS);
+      setDataAttribute(container, "metricsFrameDrops", stressMetrics.frameDrops);
+      setDataAttribute(container, "metricsImageryRequested", stressMetrics.imageryRequested);
+      setDataAttribute(container, "metricsRenderCount", stressMetrics.renderCount);
       output.textContent = `after-load-profile:${stressAfterTiles || "none"}:ratio=${fpsRatio}:sceneDelta=${sceneObjectDelta}`;
     } catch (error) {
       handleError(error);
@@ -493,6 +498,11 @@ export function runBasicGlobeLoadProfileRegression(
   container.dataset.polylineCount = "";
   container.dataset.polygonCount = "";
   container.dataset.allExpected = "";
+  container.dataset.metricsScenario = "";
+  container.dataset.metricsAverageFps = "";
+  container.dataset.metricsFrameDrops = "";
+  container.dataset.metricsImageryRequested = "";
+  container.dataset.metricsRenderCount = "";
   output.textContent = "启动中:basic-globe-load-profile-regression";
 
   engine.addLayer(terrain);
