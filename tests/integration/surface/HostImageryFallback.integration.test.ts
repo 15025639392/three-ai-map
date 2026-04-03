@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { vi } from "vitest";
 import { GlobeEngine } from "../../../src/engine/GlobeEngine";
 import { RasterLayer } from "../../../src/layers/RasterLayer";
 import { RasterTileSource } from "../../../src/sources/RasterTileSource";
@@ -8,6 +9,17 @@ describe("Host imagery fallback", () => {
     const container = document.createElement("div");
     const sourceId = "fallback-imagery";
     const layerId = "fallback-imagery-layer";
+    const fillRectSpy = vi.fn();
+    const getContextMock = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockImplementation(() => {
+        const context = {
+          fillStyle: "",
+          fillRect: fillRectSpy
+        };
+
+        return context as unknown as CanvasRenderingContext2D;
+      });
     const engine = new GlobeEngine({
       container,
       showBaseGlobe: false,
@@ -37,7 +49,10 @@ describe("Host imagery fallback", () => {
     expect(stats.activeTileCount).toBeGreaterThan(0);
     expect(stats.ancestorFallbackCount).toBeGreaterThan(0);
     expect(engine.getDebugState().imageryAncestorFallbackCount).toBeGreaterThan(0);
+    expect(getContextMock).toHaveBeenCalled();
+    expect(fillRectSpy).toHaveBeenCalled();
 
     engine.dispose();
+    getContextMock.mockRestore();
   });
 });

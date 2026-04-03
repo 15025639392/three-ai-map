@@ -157,7 +157,12 @@ function createSolidColorFallback(color: string, size = 1): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
-  canvas.dataset.fallbackColor = color;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    context.fillStyle = color;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
 
   return canvas;
 }
