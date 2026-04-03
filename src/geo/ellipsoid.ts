@@ -1,5 +1,11 @@
 export const WGS84_RADIUS = 6378137;
 
+export class Ellipsoid {
+  constructor(readonly radius = WGS84_RADIUS) {}
+}
+
+export const WGS84_ELLIPSOID = new Ellipsoid();
+
 export function clampLatitude(lat: number): number {
   return Math.max(-90, Math.min(90, lat));
 }

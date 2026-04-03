@@ -10,6 +10,9 @@ export interface EngineView {
   lng: number;
   lat: number;
   altitude: number;
+  heading?: number;
+  pitch?: number;
+  roll?: number;
 }
 
 export interface RendererAdapter {

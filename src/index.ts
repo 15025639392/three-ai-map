@@ -8,6 +8,8 @@ export type {
   GlobeEngineRecoveryRule,
   EngineView
 } from "./engine/EngineOptions";
+export { CameraController } from "./camera/CameraController";
+export type { CameraViewUpdate } from "./camera/CameraController";
 
 // Layers
 export { Layer } from "./layers/Layer";
@@ -68,6 +70,11 @@ export {
   gcj02ToBd09,
   bd09ToGcj02
 } from "./spatial/CoordinateTransform";
+export { CoordinateSystem } from "./geo/CoordinateSystem";
+export type { Cartesian3 } from "./geo/CoordinateSystem";
+export { Ellipsoid, WGS84_ELLIPSOID, WGS84_RADIUS } from "./geo/ellipsoid";
+export { createEastNorthUpAxes } from "./geo/ENU";
+export type { ENUAxes } from "./geo/ENU";
 
 // Core Systems
 export { AnimationManager } from "./core/Animation";
