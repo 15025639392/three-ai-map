@@ -1,8 +1,9 @@
 import { Group, Raycaster, Vector2 } from "three";
 import { CameraController } from "../core/CameraController";
 import { InteractionAnchorOverlay } from "../core/InteractionAnchorOverlay";
-import { PerformanceMonitor, PerformanceReport } from "../core/PerformanceMonitor";
 import { SceneSystem } from "../core/SceneSystem";
+import { type DebugState } from "../diagnostics/DebugState";
+import { PerformanceMonitor, type PerformanceReport } from "../diagnostics/PerformanceMonitor";
 import { cartesianToCartographic } from "../geo/projection";
 import { intersectRayWithSphere } from "../geo/raycast";
 import {
@@ -49,12 +50,6 @@ interface RecoveryStageStats {
   queryCount: number;
   hitCount: number;
   ruleHitCount: number;
-}
-
-interface DebugState {
-  activeImageryTiles: number;
-  visibleTiles: number;
-  imageryRequestCount: number;
 }
 
 interface WaitForSourceOptions {
@@ -331,7 +326,11 @@ export class GlobeEngine {
   }
 
   getDebugState(): DebugState {
+    const metrics = this.performanceMonitor.getMetrics();
+
     return {
+      fps: metrics.fps,
+      frameTimeMs: metrics.frameTimeMs,
       activeImageryTiles: this.surfaceSystem.getVisibleImageryTileCount(),
       visibleTiles: this.surfaceSystem.getVisibleTileCount(),
       imageryRequestCount: this.surfaceSystem.getImageryRequestCount()
