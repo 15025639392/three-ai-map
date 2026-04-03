@@ -71,7 +71,7 @@ export function buildTerrainFillStats(
 
       const absDelta = Math.abs(neighbor.lodDelta);
       maxNeighborLodDelta = Math.max(maxNeighborLodDelta, absDelta);
-      if (absDelta > 1) {
+      if (absDelta >= 1) {
         tileHasCrackRisk = true;
       }
     }

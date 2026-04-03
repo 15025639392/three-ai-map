@@ -3,11 +3,11 @@ import { GlobeEngine } from "../../../src/engine/GlobeEngine";
 import { TerrainTileLayer } from "../../../src/layers/TerrainTileLayer";
 import { TerrainTileSource, type ElevationTileData } from "../../../src/sources/TerrainTileSource";
 
-function createFlatElevationTile(): ElevationTileData {
+function createFlatElevationTile(height = 0): ElevationTileData {
   return {
     width: 2,
     height: 2,
-    data: new Float32Array([0, 0, 0, 0])
+    data: new Float32Array([height, height, height, height])
   };
 }
 
@@ -21,7 +21,7 @@ describe("Surface crack stability", () => {
       encode: "terrarium",
       minZoom: 2,
       maxZoom: 8,
-      loadTile: async () => createFlatElevationTile()
+      loadTile: async (coordinate) => createFlatElevationTile((coordinate.z - 2) * 10)
     });
     const terrain = new TerrainTileLayer("surface-crack-terrain-layer", {
       source: sourceId,
@@ -33,15 +33,16 @@ describe("Surface crack stability", () => {
 
     engine.addSource(sourceId, source);
     engine.addLayer(terrain);
-    engine.setView({ lng: 8, lat: 28, altitude: 1.3 });
+    engine.setView({ lng: 8, lat: 28, altitude: 1.05 });
     await terrain.ready();
     engine.render();
 
     const stats = terrain.getDebugStats();
-    expect(stats.fillEdgeCount).toBeGreaterThanOrEqual(0);
-    expect(stats.fillCornerCount).toBeGreaterThanOrEqual(0);
-    expect(stats.maxNeighborLodDelta).toBeGreaterThanOrEqual(0);
-    expect(stats.crackDetectedCount).toBeGreaterThanOrEqual(0);
+    expect(stats.activeTileCount).toBeGreaterThan(1);
+    expect(stats.fillEdgeCount).toBeGreaterThan(0);
+    expect(stats.fillCornerCount).toBeGreaterThan(0);
+    expect(stats.maxNeighborLodDelta).toBe(1);
+    expect(stats.crackDetectedCount).toBeGreaterThanOrEqual(2);
 
     engine.dispose();
   });
