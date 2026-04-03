@@ -217,6 +217,14 @@ export class SurfaceSystem {
     return ids;
   }
 
+  getVisibleTileKeys(): string[] {
+    return this.getSurfaceTilePlan().nodes.map((node) => node.key);
+  }
+
+  getVisibleTileCount(): number {
+    return this.getVisibleTileKeys().length;
+  }
+
   private getOrderedImageryLayers(): RasterLayer[] {
     return [...this.imageryLayers.values()].sort((left, right) => {
       const leftZ = left.zIndex ?? 0;

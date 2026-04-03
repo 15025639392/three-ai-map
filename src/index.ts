@@ -101,6 +101,12 @@ export type { SurfaceHost, SurfacePlannerConfig } from "./surface/SurfaceHost";
 export { defaultTileLoader, corsTileLoader, type TileSource } from "./tiles/tileLoader";
 export type { LngLatBounds } from "./tiles/LngLatBounds";
 export type { ElevationEncoding } from "./tiles/ElevationEncoding";
+export { QuadtreeLOD } from "./tiles/QuadtreeLOD";
+export type {
+  QuadtreeLODOptions,
+  ScreenSpaceErrorInput
+} from "./tiles/QuadtreeLOD";
+export { parseTileKey, tileKey } from "./tiles/TileKey";
 
 // Sources
 export type { Source, SourceContext } from "./sources/Source";
