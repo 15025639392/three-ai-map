@@ -256,6 +256,22 @@ export class SurfaceSystem {
     return this.terrainLayer?.getDebugStats().terrariumDecode.fallbackCount ?? 0;
   }
 
+  getTerrainFillEdgeCount(): number {
+    return this.terrainLayer?.getDebugStats().fillEdgeCount ?? 0;
+  }
+
+  getTerrainFillCornerCount(): number {
+    return this.terrainLayer?.getDebugStats().fillCornerCount ?? 0;
+  }
+
+  getTerrainMaxNeighborLodDelta(): number {
+    return this.terrainLayer?.getDebugStats().maxNeighborLodDelta ?? 0;
+  }
+
+  getTerrainCrackDetectedCount(): number {
+    return this.terrainLayer?.getDebugStats().crackDetectedCount ?? 0;
+  }
+
   getImageryRequestCount(sourceId?: string): number {
     let count = 0;
     const countedSourceIds = new Set<string>();

@@ -13,6 +13,8 @@ import {
   getSurfaceTileBounds
 } from "../tiles/SurfaceTileTree";
 import type { SurfaceHost, SurfacePlannerConfig } from "../surface/SurfaceHost";
+import { buildTerrainFillStats, buildTileSkirtMaskFromAdjacency, type TileSkirtMask } from "../surface/TerrainFillMesh";
+import { createEmptyAdjacency, type SurfaceTileAdjacency } from "../surface/SurfaceAdjacency";
 import { Layer, LayerContext } from "./Layer";
 import type { TileCoordinate } from "../tiles/TileViewport";
 import { TerrainTileSource, type ElevationTileData } from "../sources/TerrainTileSource";
@@ -33,13 +35,6 @@ export interface TerrainTileLayerOptions {
 }
 
 type TerrainDisplayState = "parentFallback" | "readyLeaf";
-
-interface TileSkirtMask {
-  top: boolean;
-  right: boolean;
-  bottom: boolean;
-  left: boolean;
-}
 
 interface TerrainGeomorphState {
   basePositions: Float32Array;
@@ -147,44 +142,16 @@ function encodeSkirtMask(mask: TileSkirtMask): string {
   return `${mask.top ? "1" : "0"}${mask.right ? "1" : "0"}${mask.bottom ? "1" : "0"}${mask.left ? "1" : "0"}`;
 }
 
-function computeTileSkirtMasks(coordinates: TileCoordinate[]): Map<string, TileSkirtMask> {
+function buildSkirtMaskMapFromAdjacency(
+  coordinates: readonly TileCoordinate[],
+  adjacencyByKey: ReadonlyMap<string, SurfaceTileAdjacency>
+): Map<string, TileSkirtMask> {
   const masks = new Map<string, TileSkirtMask>();
-  const keySet = new Set(coordinates.map((coordinate) => tileCoordinateKey(coordinate)));
 
   for (const coordinate of coordinates) {
     const key = tileCoordinateKey(coordinate);
-    const worldTileCount = 2 ** coordinate.z;
-    const hasTopNeighbor =
-      coordinate.y > 0 &&
-      keySet.has(tileCoordinateKey({
-        z: coordinate.z,
-        x: coordinate.x,
-        y: coordinate.y - 1
-      }));
-    const hasBottomNeighbor =
-      coordinate.y < worldTileCount - 1 &&
-      keySet.has(tileCoordinateKey({
-        z: coordinate.z,
-        x: coordinate.x,
-        y: coordinate.y + 1
-      }));
-    const hasLeftNeighbor = keySet.has(tileCoordinateKey({
-      z: coordinate.z,
-      x: normalizeTileX(coordinate.x - 1, coordinate.z),
-      y: coordinate.y
-    }));
-    const hasRightNeighbor = keySet.has(tileCoordinateKey({
-      z: coordinate.z,
-      x: normalizeTileX(coordinate.x + 1, coordinate.z),
-      y: coordinate.y
-    }));
-
-    masks.set(key, {
-      top: !hasTopNeighbor,
-      right: !hasRightNeighbor,
-      bottom: !hasBottomNeighbor,
-      left: !hasLeftNeighbor
-    });
+    const adjacency = adjacencyByKey.get(key) ?? createEmptyAdjacency();
+    masks.set(key, buildTileSkirtMaskFromAdjacency(adjacency));
   }
 
   return masks;
@@ -463,6 +430,11 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
   private currentDisplayKey = "";
   private renderInvalidationQueued = false;
   private colorWriteEnabled = true;
+  private planAdjacencyByKey = new Map<string, SurfaceTileAdjacency>();
+  private fillEdgeCount = 0;
+  private fillCornerCount = 0;
+  private maxNeighborLodDelta = 0;
+  private crackDetectedCount = 0;
 
   constructor(id: string, options: TerrainTileLayerOptions) {
     super(id);
@@ -493,6 +465,11 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
     this.displayTileKeys.clear();
     this.currentSelectionKey = "";
     this.currentDisplayKey = "";
+    this.planAdjacencyByKey.clear();
+    this.fillEdgeCount = 0;
+    this.fillCornerCount = 0;
+    this.maxNeighborLodDelta = 0;
+    this.crackDetectedCount = 0;
   }
 
   update(deltaTime: number, context: LayerContext): void {
@@ -553,6 +530,10 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
     activeTileKeys: string[];
     elevation: ReturnType<TerrainTileSource["getStats"]>;
     terrariumDecode: TerrariumDecoderStats;
+    fillEdgeCount: number;
+    fillCornerCount: number;
+    maxNeighborLodDelta: number;
+    crackDetectedCount: number;
   } {
     const source = this.getTerrainSource();
     return {
@@ -573,7 +554,11 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
         workerHitCount: 0,
         fallbackCount: 0,
         workerHitRate: 0
-      }
+      },
+      fillEdgeCount: this.fillEdgeCount,
+      fillCornerCount: this.fillCornerCount,
+      maxNeighborLodDelta: this.maxNeighborLodDelta,
+      crackDetectedCount: this.crackDetectedCount
     };
   }
 
@@ -589,6 +574,11 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
       this.currentSelectionKey = "";
       this.currentDisplayKey = "";
       this.displayTileKeys.clear();
+      this.planAdjacencyByKey.clear();
+      this.fillEdgeCount = 0;
+      this.fillCornerCount = 0;
+      this.maxNeighborLodDelta = 0;
+      this.crackDetectedCount = 0;
       const removedAny = this.clearActiveTiles();
       this.readyPromise = Promise.resolve();
 
@@ -600,19 +590,37 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
     }
 
     const desiredCoordinates = uniqueSortedCoordinates(sharedPlan.nodes.map((node) => node.coordinate));
+    this.planAdjacencyByKey = new Map(
+      sharedPlan.nodes.map((node) => [node.key, node.adjacency] as const)
+    );
+    const fillStats = buildTerrainFillStats(
+      sharedPlan.nodes.map((node) => node.key),
+      this.planAdjacencyByKey
+    );
+    this.fillEdgeCount = fillStats.fillEdgeCount;
+    this.fillCornerCount = fillStats.fillCornerCount;
+    this.maxNeighborLodDelta = fillStats.maxNeighborLodDelta;
+    this.crackDetectedCount = fillStats.crackDetectedCount;
     const desiredMorphFactors = new Map(
       sharedPlan.nodes.map((node) => [node.key, node.morphFactor] as const)
     );
     const desiredPriorities = new Map(
       sharedPlan.nodes.map((node) => [node.key, node.priority] as const)
     );
-    const desiredTileSkirtMasks = computeTileSkirtMasks(desiredCoordinates);
+    const desiredTileSkirtMasks = buildSkirtMaskMapFromAdjacency(
+      desiredCoordinates,
+      this.planAdjacencyByKey
+    );
     const selectionKey = buildSelectionKey(desiredCoordinates);
 
     if (!selectionKey) {
       this.currentSelectionKey = "";
       this.currentDisplayKey = "";
       this.displayTileKeys.clear();
+      this.fillEdgeCount = 0;
+      this.fillCornerCount = 0;
+      this.maxNeighborLodDelta = 0;
+      this.crackDetectedCount = 0;
       const removedAny = this.clearActiveTiles();
       this.readyPromise = Promise.resolve();
 
@@ -635,7 +643,10 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
       )
     );
     const displayCoordinates = this.resolveDisplayCoordinates(desiredCoordinates);
-    const displayTileSkirtMasks = computeTileSkirtMasks(displayCoordinates);
+    const displayTileSkirtMasks = buildSkirtMaskMapFromAdjacency(
+      displayCoordinates,
+      this.planAdjacencyByKey
+    );
     const displayKey = buildSelectionKey(displayCoordinates);
     const displayResolved = displayCoordinates.every((coordinate) => {
       const key = tileCoordinateKey(coordinate);
@@ -822,11 +833,48 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
         continue;
       }
 
+      if (!this.canAdvanceGeomorph(key, displayKeys)) {
+        entry.geomorph.targetFactor = 1;
+        continue;
+      }
+
       entry.geomorph.targetFactor = Math.max(
         0,
         Math.min(1, desiredMorphFactors.get(key) ?? 1)
       );
     }
+  }
+
+  private canAdvanceGeomorph(key: string, displayKeys: ReadonlySet<string>): boolean {
+    const adjacency = this.planAdjacencyByKey.get(key);
+
+    if (!adjacency) {
+      return true;
+    }
+
+    const neighbors = [adjacency.top, adjacency.right, adjacency.bottom, adjacency.left];
+
+    for (const neighbor of neighbors) {
+      if (!neighbor) {
+        continue;
+      }
+
+      if (neighbor.lodDelta !== 0) {
+        return false;
+      }
+
+      if (!displayKeys.has(neighbor.key)) {
+        continue;
+      }
+
+      const entry = this.activeTiles.get(neighbor.key);
+
+      if (!entry || !entry.visible || entry.provisional || !entry.mesh) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private advanceGeomorph(deltaTime: number): boolean {

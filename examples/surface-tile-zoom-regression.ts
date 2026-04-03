@@ -170,6 +170,10 @@ export function runSurfaceTileZoomRegression(
       report.metrics.get("recoveryPolicyHitCount:imagery")?.value ?? 0;
     const recoveryPolicyImageryRuleHitCount =
       report.metrics.get("recoveryPolicyRuleHitCount:imagery")?.value ?? 0;
+    const fillEdgeCount = terrainStats.fillEdgeCount;
+    const fillCornerCount = terrainStats.fillCornerCount;
+    const maxNeighborLodDelta = terrainStats.maxNeighborLodDelta;
+    const crackDetectedCount = terrainStats.crackDetectedCount;
 
     container.dataset.phase = "after-zoom";
     container.dataset.averageFps = `${averageFPS}`;
@@ -187,7 +191,11 @@ export function runSurfaceTileZoomRegression(
     container.dataset.recoveryPolicyImageryQueryCount = `${recoveryPolicyImageryQueryCount}`;
     container.dataset.recoveryPolicyImageryHitCount = `${recoveryPolicyImageryHitCount}`;
     container.dataset.recoveryPolicyImageryRuleHitCount = `${recoveryPolicyImageryRuleHitCount}`;
-    output.textContent = `after-zoom:${container.dataset.afterTiles || "none"}:fps=${averageFPS}:cancel=${imageryCancelRatio}`;
+    container.dataset.fillEdgeCount = `${fillEdgeCount}`;
+    container.dataset.fillCornerCount = `${fillCornerCount}`;
+    container.dataset.maxNeighborLodDelta = `${maxNeighborLodDelta}`;
+    container.dataset.crackDetectedCount = `${crackDetectedCount}`;
+    output.textContent = `after-zoom:${container.dataset.afterTiles || "none"}:fps=${averageFPS}:cancel=${imageryCancelRatio}:crack=${crackDetectedCount}`;
   };
 
   container.dataset.phase = "booting";
@@ -208,6 +216,10 @@ export function runSurfaceTileZoomRegression(
   container.dataset.recoveryPolicyImageryQueryCount = "";
   container.dataset.recoveryPolicyImageryHitCount = "";
   container.dataset.recoveryPolicyImageryRuleHitCount = "";
+  container.dataset.fillEdgeCount = "";
+  container.dataset.fillCornerCount = "";
+  container.dataset.maxNeighborLodDelta = "";
+  container.dataset.crackDetectedCount = "";
   output.textContent = "启动中:surface-tile-zoom-regression";
 
   window.requestAnimationFrame(frameLoop);

@@ -2,6 +2,7 @@ import { Frustum, Matrix4, PerspectiveCamera, Sphere, Vector3 } from "three";
 import { cartesianToCartographic, cartographicToCartesian } from "../geo/projection";
 import { clampLatitude, normalizeLongitude } from "../geo/ellipsoid";
 import { TileCoordinate } from "./TileViewport";
+import { buildSurfaceAdjacencyMap, type SurfaceTileAdjacency } from "../surface/SurfaceAdjacency";
 
 export interface SurfaceTileSelectionOptions {
   camera: PerspectiveCamera;
@@ -24,6 +25,7 @@ export interface TileNodePlan {
   key: string;
   coordinate: TileCoordinate;
   parentKey: string | null;
+  adjacency: SurfaceTileAdjacency;
   priority: number;
   wantedState: TileNodeWantedState;
   interactionPhase: SurfaceTileInteractionPhase;
@@ -543,6 +545,7 @@ function selectLeafCoordinates(
 export function planSurfaceTileNodes(options: SurfaceTilePlannerOptions): SurfaceTilePlan {
   const interactionPhase = options.interactionPhase ?? "idle";
   const coordinates = selectLeafCoordinates(options, interactionPhase);
+  const adjacencyByKey = buildSurfaceAdjacencyMap(coordinates);
   const targetZoom = coordinates.reduce(
     (maxZoom, coordinate) => Math.max(maxZoom, coordinate.z),
     options.minZoom
@@ -564,6 +567,12 @@ export function planSurfaceTileNodes(options: SurfaceTilePlannerOptions): Surfac
       key: tileCoordinateKey(coordinate),
       coordinate,
       parentKey: coordinate.z === 0 ? null : tileCoordinateKey(getParentCoordinate(coordinate)),
+      adjacency: adjacencyByKey.get(tileCoordinateKey(coordinate)) ?? {
+        top: null,
+        right: null,
+        bottom: null,
+        left: null
+      },
       priority: computeNodePriority(coordinate, centerByZoom),
       wantedState: "leaf" as const,
       interactionPhase,
