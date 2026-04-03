@@ -76,17 +76,16 @@ npm run test:map-engine             # 首阶段统一质量入口
 
 ```bash
 npm run test:run -- tests/integration/engine/PerformanceReport.integration.test.ts
-npm run test:metrics:baseline
 npm run test:map-engine
+npm run test:metrics:baseline
 npm run typecheck
 ```
 
 浏览器 smoke 会校验二十三个确定性 demo：`examples/surface-tile-regression.ts`、`examples/surface-tile-resize-regression.ts`、`examples/surface-tile-zoom-regression.ts`、`examples/surface-tile-recovery-stages-regression.ts`、`examples/surface-tile-coord-transform-regression.ts`、`examples/surface-tile-lifecycle-regression.ts`、`examples/surface-tile-lifecycle-stress-regression.ts`、`examples/basic-globe-performance-regression.ts`、`examples/basic-globe-load-profile-regression.ts`、`examples/basic-globe-load-ladder-regression.ts`、`examples/basic-globe-load-recovery-regression.ts`、`examples/basic-globe-load-recovery-stress-regression.ts`、`examples/basic-globe-load-recovery-endurance-regression.ts`、`examples/basic-globe-load-recovery-drift-regression.ts`、`examples/oblique-photogrammetry-regression.ts`、`examples/vector-tile-regression.ts`、`examples/projection-regression.ts`、`examples/terrarium-decode-regression.ts`、`examples/vector-pick-regression.ts`、`examples/vector-geometry-pick-regression.ts`、`examples/vector-multi-tile-pick-regression.ts`、`examples/vector-overlap-pick-regression.ts`、`examples/vector-layer-zindex-pick-regression.ts`，并在 `test-results/` 下输出截图、DOM 快照与指标 JSON（`surface-tile-zoom-regression-metrics.json`、`surface-tile-recovery-stages-regression-metrics.json`、`surface-tile-coord-transform-regression-metrics.json`、`surface-tile-lifecycle-regression-metrics.json`、`surface-tile-lifecycle-stress-regression-metrics.json`、`basic-globe-performance-regression-metrics.json`、`basic-globe-load-profile-regression-metrics.json`、`basic-globe-load-ladder-regression-metrics.json`、`basic-globe-load-recovery-regression-metrics.json`、`basic-globe-load-recovery-stress-regression-metrics.json`、`basic-globe-load-recovery-endurance-regression-metrics.json`、`basic-globe-load-recovery-drift-regression-metrics.json`、`oblique-photogrammetry-regression-metrics.json`、`vector-tile-regression-metrics.json`、`projection-regression-metrics.json`、`terrarium-decode-regression-metrics.json`、`vector-pick-regression-metrics.json`、`vector-geometry-pick-regression-metrics.json`、`vector-multi-tile-pick-regression-metrics.json`、`vector-overlap-pick-regression-metrics.json`、`vector-layer-zindex-pick-regression-metrics.json`）。
 smoke 阈值断言当前覆盖 imagery / tile-load / tile-parse 恢复指标、SurfaceTile 坐标转换与生命周期（单轮 + 压力）一致性指标、Basic Globe pan/zoom 性能 + 双画像 + 负载阶梯 + 负载恢复 + 负载恢复压力 + 负载恢复耐久 + 负载恢复漂移门禁、Oblique Photogrammetry 可见节点/深度/拾取指标、Terrarium decode worker-hit/fallback 指标，以及 VectorTile 点/线/面、多 tile 边界、重叠要素优先级与跨图层 zIndex pick 精度门禁。
 CI workflow：`.github/workflows/map-engine-checks.yml` 会在 PR / main(master) push 时执行 `npm run test:map-engine`（含 `test:metrics:baseline`），并上传 `test-results/*.png|*.html|*.json` 作为回归证据。
-`test:map-engine` 会先执行 `datasets:oblique:validate` 与 `test:datasets:oblique:fault-gates`，确保 oblique 3D Tiles 数据清单、schema、fixture checksum 与下载链路负向门禁（不可达/校验失配）均可用。
-baseline 配置默认位于 `scripts/map-engine-metrics-baseline.config.json`，可通过环境变量 `MAP_ENGINE_METRICS_BASELINE_CONFIG` 在 CI 切换。
-CI 平台矩阵当前为 `ubuntu-latest` + `macos-latest`，分别映射 `scripts/map-engine-metrics-baseline.linux.json` 与 `scripts/map-engine-metrics-baseline.macos.json`。
+`test:map-engine` 当前会执行：`PerformanceReport/RecoveryPolicy/ErrorEvent/DebugState` 集成测试、`typecheck`、`build`、`test:browser:raster-ellipsoid-host`、`test:browser:surface-tiles`、`test:metrics:baseline`。
+`test:metrics:baseline` 依赖 browser smoke 产物（`test-results/raster-layer-ellipsoid-host-smoke.html`、`test-results/surface-tile-zoom-regression-smoke.html`）；在干净环境请先执行 `test:map-engine` 或对应 browser smoke 命令。
 metrics baseline 断言会输出 `test-results/map-engine-metrics-baseline-diff.json`，失败时用于直接定位超阈值指标。
 
 ## 目录
