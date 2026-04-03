@@ -87,6 +87,7 @@ CI workflow：`.github/workflows/map-engine-checks.yml` 会在 PR / main(master)
 `test:map-engine` 当前会执行：`PerformanceReport/RecoveryPolicy/ErrorEvent/DebugState` 集成测试、`typecheck`、`build`、`test:browser:raster-ellipsoid-host`、`test:browser:surface-tiles`、`test:metrics:baseline`。
 `test:metrics:baseline` 依赖 browser smoke 产物（`test-results/raster-layer-ellipsoid-host-smoke.html`、`test-results/surface-tile-zoom-regression-smoke.html`）；在干净环境请先执行 `test:map-engine` 或对应 browser smoke 命令。
 metrics baseline 断言会输出 `test-results/map-engine-metrics-baseline-diff.json`，失败时用于直接定位超阈值指标。
+P1 已完成，进入 P2 前保留的两类残余风险记录见 [docs/checkpoints/2026-04-04-p1-residual-risks.md](/Users/ldy/Desktop/map/arc/repo/docs/checkpoints/2026-04-04-p1-residual-risks.md)。
 
 ## 目录
 
