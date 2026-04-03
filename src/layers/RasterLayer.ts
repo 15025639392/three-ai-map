@@ -80,6 +80,12 @@ interface RasterTilePlan {
 interface LoadedRasterTile {
   request: RasterTileRequest;
   source: TileSource;
+  sourceKind: "target" | "ancestor" | "solidFallback";
+}
+
+interface RequestedImagerySource {
+  source: TileSource;
+  sourceKind: "target" | "ancestor" | "solidFallback";
 }
 
 class StaleRasterTileError extends Error {
@@ -151,12 +157,7 @@ function createSolidColorFallback(color: string, size = 1): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext("2d");
-
-  if (ctx) {
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
+  canvas.dataset.fallbackColor = color;
 
   return canvas;
 }
@@ -1202,16 +1203,22 @@ export class RasterLayer extends Layer {
       }
 
       try {
-        return await Promise.all(candidateRequests.map(async (request) => ({
-          request,
-          source: await this.requestImageryTile(
+        return await Promise.all(candidateRequests.map(async (request) => {
+          const result = await this.requestImageryTile(
             source,
             plan.hostTileKey,
             request,
             recoveryConfig,
-            isCurrent
-          )
-        })));
+            isCurrent,
+            plan.imageryZoom
+          );
+
+          return {
+            request,
+            source: result.source,
+            sourceKind: result.sourceKind
+          };
+        }));
       } catch (error) {
         if (error instanceof StaleRasterTileError || isTileRequestAbort(error)) {
           throw error;
@@ -1265,7 +1272,8 @@ export class RasterLayer extends Layer {
 
         loaded.push({
           request,
-          source: cached
+          source: cached,
+          sourceKind: request.coordinate.z < targetZoom ? "ancestor" : "target"
         });
       }
 
@@ -1449,7 +1457,7 @@ export class RasterLayer extends Layer {
     tiles: readonly LoadedRasterTile[]
   ): "ancestorFallback" | "targetReady" {
     for (const tile of tiles) {
-      if (tile.request.coordinate.z < plan.imageryZoom) {
+      if (tile.sourceKind !== "target") {
         return "ancestorFallback";
       }
     }
@@ -1469,7 +1477,14 @@ export class RasterLayer extends Layer {
     }
 
     for (const request of plan.detailRequests) {
-      void this.requestImageryTile(source, plan.hostTileKey, request, recoveryConfig, isCurrent)
+      void this.requestImageryTile(
+        source,
+        plan.hostTileKey,
+        request,
+        recoveryConfig,
+        isCurrent,
+        plan.imageryZoom
+      )
         .then((tileSource) => {
           if (!isCurrent()) {
             return;
@@ -1494,7 +1509,7 @@ export class RasterLayer extends Layer {
           try {
             this.enqueueDetailDraw(activeEntry, {
               request,
-              source: tileSource
+              source: tileSource.source
             });
           } catch (renderError) {
             this.emitLayerError(this.context, {
@@ -1533,8 +1548,9 @@ export class RasterLayer extends Layer {
     hostTileKey: string,
     request: RasterTileRequest,
     recoveryConfig: { attempts: number; delayMs: number; fallbackColor: string | null },
-    isCurrent: () => boolean
-  ): Promise<TileSource> {
+    isCurrent: () => boolean,
+    targetImageryZoom: number
+  ): Promise<RequestedImagerySource> {
     let lastError: unknown = null;
     let attemptsUsed = 0;
 
@@ -1546,7 +1562,11 @@ export class RasterLayer extends Layer {
       }
 
       try {
-        return await source.request(request.coordinate, { priority: request.priority });
+        const loaded = await source.request(request.coordinate, { priority: request.priority });
+        return {
+          source: loaded,
+          sourceKind: request.coordinate.z < targetImageryZoom ? "ancestor" : "target"
+        };
       } catch (error) {
         if (isTileRequestAbort(error)) {
           throw error;
@@ -1583,7 +1603,10 @@ export class RasterLayer extends Layer {
             }
           });
 
-          return createSolidColorFallback(recoveryConfig.fallbackColor);
+          return {
+            source: createSolidColorFallback(recoveryConfig.fallbackColor),
+            sourceKind: "solidFallback"
+          };
         }
 
         throw new RasterTileLoadError({
