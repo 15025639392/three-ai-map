@@ -97,6 +97,10 @@ export class GlobeEngine {
     recoveryPolicy,
     rendererFactory = createDefaultRenderer
   }: GlobeEngineOptions) {
+    if (!container) {
+      throw new Error("container is required");
+    }
+
     this.container = container;
     this.radius = radius;
     this.showBaseGlobe = showBaseGlobe;
@@ -383,6 +387,10 @@ export class GlobeEngine {
     this.globe.dispose();
     this.rendererSystem.dispose();
     this.rendererSystem.renderer.domElement.remove();
+  }
+
+  dispose(): void {
+    this.destroy();
   }
 
   getPerformanceReport(): PerformanceReport {

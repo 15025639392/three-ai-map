@@ -1,6 +1,7 @@
 // Core Engine
 export { GlobeEngine } from "./engine/GlobeEngine";
 export type { GlobeEngineEvents } from "./engine/GlobeEngine";
+export type { EngineModule } from "./engine/EngineModule";
 export type {
   GlobeEngineOptions,
   GlobeEngineRecoveryPolicy,
@@ -71,7 +72,10 @@ export {
 // Core Systems
 export { AnimationManager } from "./core/Animation";
 export type { Animation, AnimationOptions } from "./core/Animation";
+export { EventBus } from "./core/EventBus";
 export { GestureController } from "./core/GestureController";
+export { FrameLoop } from "./core/FrameLoop";
+export { ModuleRegistry } from "./core/ModuleRegistry";
 export { PerformanceMonitor } from "./core/PerformanceMonitor";
 export type { Metric, PerformanceReport } from "./core/PerformanceMonitor";
 export { PostProcessing } from "./core/PostProcessing";
