@@ -181,9 +181,11 @@ export class GlobeEngine {
 
   setView(view: EngineView): void {
     this.suppressInteractionPhaseForProgrammaticView = true;
+    this.cancelScheduledRender();
 
     try {
       this.cameraController.setView(view);
+      this.requestRender();
     } finally {
       this.suppressInteractionPhaseForProgrammaticView = false;
     }
@@ -426,7 +428,7 @@ export class GlobeEngine {
 
   private handleCameraChange = (): void => {
     this.surfaceSystem.notifyCameraChanged(this.suppressInteractionPhaseForProgrammaticView);
-    this.render();
+    this.requestRender();
   };
 
   private handleLayerError = (payload: LayerErrorPayload): void => {
@@ -557,7 +559,7 @@ export class GlobeEngine {
     return true;
   }
 
-  private requestRender = (): void => {
+  requestRender = (): void => {
     if (this.pendingRenderFrameId !== null) {
       return;
     }

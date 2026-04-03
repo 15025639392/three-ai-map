@@ -123,7 +123,7 @@ export class CameraController {
     element,
     globeRadius,
     minAltitude = globeRadius * 0.000001,
-    maxAltitude = globeRadius * 20,
+    maxAltitude = Math.max(globeRadius * 20, 20_000_000),
     onChange
   }: CameraControllerOptions) {
     this.camera = camera;
