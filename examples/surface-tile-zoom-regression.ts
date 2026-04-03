@@ -84,10 +84,65 @@ function delayValue<T>(
   });
 }
 
+function navigateToSmokeResultPage(metrics: {
+  phase: string;
+  fillEdgeCount: number;
+  fillCornerCount: number;
+  maxNeighborLodDelta: number;
+  crackDetectedCount: number;
+}): void {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return;
+  }
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>surface-tile-zoom-smoke</title></head><body data-phase="${metrics.phase}" data-fill-edge-count="${metrics.fillEdgeCount}" data-fill-corner-count="${metrics.fillCornerCount}" data-max-neighbor-lod-delta="${metrics.maxNeighborLodDelta}" data-crack-detected-count="${metrics.crackDetectedCount}">surface-tile-zoom-smoke</body></html>`;
+  window.location.replace(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+function waitForSmokeMetrics(
+  terrain: TerrainTileLayer,
+  timeoutMs: number
+): Promise<void> {
+  const startedAt = performance.now();
+
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      const stats = terrain.getDebugStats();
+      if (
+        stats.activeTileCount > 0 &&
+        stats.fillEdgeCount > 0 &&
+        stats.maxNeighborLodDelta >= 1 &&
+        stats.crackDetectedCount >= 1
+      ) {
+        resolve();
+        return;
+      }
+
+      if (performance.now() - startedAt >= timeoutMs) {
+        reject(new Error("Smoke metrics did not converge before timeout"));
+        return;
+      }
+
+      window.setTimeout(tick, 16);
+    };
+
+    tick();
+  });
+}
+
 export function runSurfaceTileZoomRegression(
   container: HTMLElement,
   output: HTMLElement
 ): GlobeEngine {
+  const search = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const smokeMode = search?.get("smoke") === "1";
+  const terrainDelayMs = smokeMode ? 2 : 18;
+  const imageryDelayBaseMs = smokeMode ? 3 : 28;
+  const imageryDelayStepMs = smokeMode ? 2 : 14;
+  const preZoomDelayMs = smokeMode ? 40 : 140;
+  const midZoomDelayMs = smokeMode ? 10 : 20;
+  const finalizeDelayMs = smokeMode ? 40 : 180;
+
   setStageSize(container, 960, 540);
 
   const engine = new GlobeEngine({
@@ -105,7 +160,7 @@ export function runSurfaceTileZoomRegression(
     cache: 64,
     concurrency: 4,
     loadTile: async (_coordinate, signal?: AbortSignal) =>
-      delayValue(18, () => createFlatElevationTile(), signal)
+      delayValue(terrainDelayMs, () => createFlatElevationTile(), signal)
   });
   engine.addSource(terrainSourceId, terrainSource);
   const terrain = new TerrainTileLayer("terrain", {
@@ -122,7 +177,7 @@ export function runSurfaceTileZoomRegression(
     concurrency: 4,
     loadTile: async (coordinate, signal?: AbortSignal) =>
       delayValue(
-        28 + ((coordinate.x + coordinate.y + coordinate.z) % 3) * 14,
+        imageryDelayBaseMs + ((coordinate.x + coordinate.y + coordinate.z) % 3) * imageryDelayStepMs,
         () => createImageryTile(coordinate),
         signal
       ),
@@ -146,6 +201,16 @@ export function runSurfaceTileZoomRegression(
     frameLoopStopped = true;
     container.dataset.phase = "error";
     output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
+    if (smokeMode) {
+      engine.dispose();
+      navigateToSmokeResultPage({
+        phase: "error",
+        fillEdgeCount: 0,
+        fillCornerCount: 0,
+        maxNeighborLodDelta: 0,
+        crackDetectedCount: 0
+      });
+    }
   };
 
   const finalize = (): void => {
@@ -196,6 +261,16 @@ export function runSurfaceTileZoomRegression(
     container.dataset.maxNeighborLodDelta = `${maxNeighborLodDelta}`;
     container.dataset.crackDetectedCount = `${crackDetectedCount}`;
     output.textContent = `after-zoom:${container.dataset.afterTiles || "none"}:fps=${averageFPS}:cancel=${imageryCancelRatio}:crack=${crackDetectedCount}`;
+    if (smokeMode) {
+      engine.dispose();
+      navigateToSmokeResultPage({
+        phase: "after-zoom",
+        fillEdgeCount,
+        fillCornerCount,
+        maxNeighborLodDelta,
+        crackDetectedCount
+      });
+    }
   };
 
   container.dataset.phase = "booting";
@@ -228,6 +303,46 @@ export function runSurfaceTileZoomRegression(
   engine.addLayer(rasterLayer);
   engine.setView({ lng: 8, lat: 28, altitude: 2.8 });
 
+  if (smokeMode) {
+    window.setTimeout(() => {
+      beforeTiles = terrain.getActiveTileKeys().join(",");
+      container.dataset.beforeTiles = beforeTiles;
+      container.dataset.phase = "before-zoom";
+      output.textContent = `before-zoom:${beforeTiles || "none"}`;
+      container.dataset.phase = "zooming";
+      engine.setView({ lng: 8, lat: 28, altitude: 1.75 });
+
+      window.setTimeout(() => {
+        engine.setView({ lng: 8, lat: 28, altitude: 1.1 });
+        waitForSmokeMetrics(terrain, 6000)
+          .then(() => {
+            container.dataset.afterTiles = terrain.getActiveTileKeys().join(",");
+            output.textContent = `settling:${container.dataset.afterTiles || "none"}`;
+            window.setTimeout(finalize, finalizeDelayMs);
+          })
+          .catch(handleError);
+      }, midZoomDelayMs);
+    }, preZoomDelayMs);
+
+    if (typeof window !== "undefined") {
+      (
+        window as Window & {
+          __surfaceTileZoomRegression?: {
+            engine: GlobeEngine;
+            terrain: TerrainTileLayer;
+            raster: RasterLayer;
+          };
+        }
+      ).__surfaceTileZoomRegression = {
+        engine,
+        terrain,
+        raster: rasterLayer,
+      };
+    }
+
+    return engine;
+  }
+
   void terrain.ready()
     .then(() => {
       beforeTiles = terrain.getActiveTileKeys().join(",");
@@ -246,11 +361,11 @@ export function runSurfaceTileZoomRegression(
             .then(() => {
               container.dataset.afterTiles = terrain.getActiveTileKeys().join(",");
               output.textContent = `settling:${container.dataset.afterTiles || "none"}`;
-              window.setTimeout(finalize, 180);
+              window.setTimeout(finalize, finalizeDelayMs);
             })
             .catch(handleError);
-        }, 20);
-      }, 140);
+        }, midZoomDelayMs);
+      }, preZoomDelayMs);
     })
     .catch(handleError);
 

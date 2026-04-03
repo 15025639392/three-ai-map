@@ -14,7 +14,7 @@ import {
 } from "../tiles/SurfaceTileTree";
 import type { SurfaceHost, SurfacePlannerConfig } from "../surface/SurfaceHost";
 import { buildTerrainFillStats, buildTileSkirtMaskFromAdjacency, type TileSkirtMask } from "../surface/TerrainFillMesh";
-import { createEmptyAdjacency, type SurfaceTileAdjacency } from "../surface/SurfaceAdjacency";
+import { buildSurfaceAdjacencyMap, createEmptyAdjacency, type SurfaceTileAdjacency } from "../surface/SurfaceAdjacency";
 import { Layer, LayerContext } from "./Layer";
 import type { TileCoordinate } from "../tiles/TileViewport";
 import { TerrainTileSource, type ElevationTileData } from "../sources/TerrainTileSource";
@@ -590,17 +590,9 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
     }
 
     const desiredCoordinates = uniqueSortedCoordinates(sharedPlan.nodes.map((node) => node.coordinate));
-    this.planAdjacencyByKey = new Map(
+    const desiredAdjacencyByKey = new Map(
       sharedPlan.nodes.map((node) => [node.key, node.adjacency] as const)
     );
-    const fillStats = buildTerrainFillStats(
-      sharedPlan.nodes.map((node) => node.key),
-      this.planAdjacencyByKey
-    );
-    this.fillEdgeCount = fillStats.fillEdgeCount;
-    this.fillCornerCount = fillStats.fillCornerCount;
-    this.maxNeighborLodDelta = fillStats.maxNeighborLodDelta;
-    this.crackDetectedCount = fillStats.crackDetectedCount;
     const desiredMorphFactors = new Map(
       sharedPlan.nodes.map((node) => [node.key, node.morphFactor] as const)
     );
@@ -609,7 +601,7 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
     );
     const desiredTileSkirtMasks = buildSkirtMaskMapFromAdjacency(
       desiredCoordinates,
-      this.planAdjacencyByKey
+      desiredAdjacencyByKey
     );
     const selectionKey = buildSelectionKey(desiredCoordinates);
 
@@ -643,9 +635,19 @@ export class TerrainTileLayer extends Layer implements SurfaceHost {
       )
     );
     const displayCoordinates = this.resolveDisplayCoordinates(desiredCoordinates);
+    const displayAdjacencyByKey = buildSurfaceAdjacencyMap(displayCoordinates);
+    this.planAdjacencyByKey = displayAdjacencyByKey;
+    const fillStats = buildTerrainFillStats(
+      displayCoordinates.map((coordinate) => tileCoordinateKey(coordinate)),
+      displayAdjacencyByKey
+    );
+    this.fillEdgeCount = fillStats.fillEdgeCount;
+    this.fillCornerCount = fillStats.fillCornerCount;
+    this.maxNeighborLodDelta = fillStats.maxNeighborLodDelta;
+    this.crackDetectedCount = fillStats.crackDetectedCount;
     const displayTileSkirtMasks = buildSkirtMaskMapFromAdjacency(
       displayCoordinates,
-      this.planAdjacencyByKey
+      displayAdjacencyByKey
     );
     const displayKey = buildSelectionKey(displayCoordinates);
     const displayResolved = displayCoordinates.every((coordinate) => {
