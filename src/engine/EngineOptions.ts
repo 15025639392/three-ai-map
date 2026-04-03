@@ -43,6 +43,12 @@ export interface GlobeEngineRecoveryPolicy {
   rules?: GlobeEngineRecoveryRule[];
 }
 
+export interface RecoveryPolicyStats {
+  queryCount: number;
+  hitCount: number;
+  ruleHitCount: number;
+}
+
 export interface GlobeEngineOptions {
   container: HTMLElement;
   radius?: number;

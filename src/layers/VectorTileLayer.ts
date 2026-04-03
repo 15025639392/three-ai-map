@@ -19,7 +19,8 @@ import { cartographicToCartesian } from "../geo/projection";
 import {
   Layer,
   LayerContext,
-  LayerErrorPayload,
+  LayerErrorCategory,
+  LayerErrorSeverity,
   LayerRecoveryOverrides,
   PickResult,
   VectorFeaturePickResult
@@ -639,24 +640,24 @@ export class VectorTileLayer extends Layer {
     error: unknown
   ): void {
     const payload = this.createLayerErrorPayload(tileKey, coordinate, error);
-
-    if (this.context?.reportError) {
-      this.context.reportError(payload);
-      return;
-    }
-
-    console.error(`[VectorTileLayer] Failed to set tile ${tileKey}:`, payload.error);
+    this.emitLayerError(this.context, payload);
   }
 
   private createLayerErrorPayload(
     tileKey: string,
     coordinate: { z: number; x: number; y: number },
     error: unknown
-  ): LayerErrorPayload {
+  ): {
+    stage: string;
+    category: LayerErrorCategory;
+    severity: LayerErrorSeverity;
+    error: unknown;
+    recoverable: boolean;
+    tileKey: string;
+    metadata: Record<string, unknown>;
+  } {
     if (error instanceof VectorTileParseError) {
       return {
-        source: "layer",
-        layerId: this.id,
         stage: "tile-parse",
         category: "data",
         severity: "warn",
@@ -672,13 +673,11 @@ export class VectorTileLayer extends Layer {
     }
 
     return {
-      source: "layer",
-      layerId: this.id,
       stage: "tile-set",
       category: "unknown",
-      severity: "warn",
+      severity: "error",
       error,
-      recoverable: true,
+      recoverable: false,
       tileKey,
       metadata: {
         coordinate

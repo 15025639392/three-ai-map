@@ -12,6 +12,7 @@ import {
   EngineView,
   GlobeEngineRecoveryRule,
   GlobeEngineOptions,
+  RecoveryPolicyStats,
   RendererAdapter
 } from "./EngineOptions";
 import { AtmosphereMesh } from "../globe/AtmosphereMesh";
@@ -47,7 +48,7 @@ export interface GlobeEngineEvents {
   error: LayerErrorPayload;
 }
 
-interface RecoveryStageStats {
+interface RecoveryStageStats extends RecoveryPolicyStats {
   queryCount: number;
   hitCount: number;
   ruleHitCount: number;
@@ -493,6 +494,24 @@ export class GlobeEngine {
 
   getPerformanceReport(): PerformanceReport {
     return this.performanceMonitor.getReport();
+  }
+
+  getRecoveryPolicyStats(stage: string): RecoveryPolicyStats {
+    const stats = this.recoveryPolicyStageStats.get(stage);
+
+    if (!stats) {
+      return {
+        queryCount: 0,
+        hitCount: 0,
+        ruleHitCount: 0
+      };
+    }
+
+    return {
+      queryCount: stats.queryCount,
+      hitCount: stats.hitCount,
+      ruleHitCount: stats.ruleHitCount
+    };
   }
 
   resetPerformanceReport(): void {

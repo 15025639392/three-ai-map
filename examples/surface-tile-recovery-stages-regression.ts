@@ -70,13 +70,14 @@ export function runSurfaceTileRecoveryStagesRegression(
   });
 
   const finalize = (): void => {
-    const report = engine.getPerformanceReport();
-    const tileLoadQueryCount = report.metrics.get("recoveryPolicyQueryCount:tile-load")?.value ?? 0;
-    const tileLoadHitCount = report.metrics.get("recoveryPolicyHitCount:tile-load")?.value ?? 0;
-    const tileLoadRuleHitCount = report.metrics.get("recoveryPolicyRuleHitCount:tile-load")?.value ?? 0;
-    const tileParseQueryCount = report.metrics.get("recoveryPolicyQueryCount:tile-parse")?.value ?? 0;
-    const tileParseHitCount = report.metrics.get("recoveryPolicyHitCount:tile-parse")?.value ?? 0;
-    const tileParseRuleHitCount = report.metrics.get("recoveryPolicyRuleHitCount:tile-parse")?.value ?? 0;
+    const tileLoadStats = engine.getRecoveryPolicyStats("tile-load");
+    const tileParseStats = engine.getRecoveryPolicyStats("tile-parse");
+    const tileLoadQueryCount = tileLoadStats.queryCount;
+    const tileLoadHitCount = tileLoadStats.hitCount;
+    const tileLoadRuleHitCount = tileLoadStats.ruleHitCount;
+    const tileParseQueryCount = tileParseStats.queryCount;
+    const tileParseHitCount = tileParseStats.hitCount;
+    const tileParseRuleHitCount = tileParseStats.ruleHitCount;
 
     container.dataset.phase = "after-stage-recovery";
     container.dataset.recoveryPolicyTileLoadQueryCount = `${tileLoadQueryCount}`;

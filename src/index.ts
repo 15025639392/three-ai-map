@@ -6,6 +6,7 @@ export type {
   GlobeEngineOptions,
   GlobeEngineRecoveryPolicy,
   GlobeEngineRecoveryRule,
+  RecoveryPolicyStats,
   EngineView
 } from "./engine/EngineOptions";
 export { CameraController } from "./camera/CameraController";
