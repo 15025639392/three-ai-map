@@ -32,6 +32,7 @@ import { PolylineLayer } from "../layers/PolylineLayer";
 import { EventEmitter } from "../utils/EventEmitter";
 import { Source } from "../sources/Source";
 import { SourceManager } from "../sources/SourceManager";
+import { RasterTileSource } from "../sources/RasterTileSource";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TerrainTileLayer } from "../layers/TerrainTileLayer";
 import { SurfaceSystem } from "../surface/SurfaceSystem";
@@ -49,6 +50,21 @@ interface RecoveryStageStats {
   hitCount: number;
   ruleHitCount: number;
 }
+
+interface DebugState {
+  activeImageryTiles: number;
+  visibleTiles: number;
+  imageryRequestCount: number;
+}
+
+interface WaitForSourceOptions {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+const DEFAULT_AUTO_IMAGERY_SOURCE_ID = "raster";
+const DEFAULT_WAIT_FOR_SOURCE_TIMEOUT_MS = 2_000;
+const DEFAULT_WAIT_FOR_SOURCE_POLL_INTERVAL_MS = 16;
 
 export class GlobeEngine {
   readonly container: HTMLElement;
@@ -74,6 +90,7 @@ export class GlobeEngine {
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
   private readonly events = new EventEmitter<GlobeEngineEvents>();
+  private readonly autoImageryLayerIds = new Map<string, string>();
   private markerLayer: MarkerLayer | null = null;
   private polylineLayer: PolylineLayer | null = null;
   private polygonLayer: PolygonLayer | null = null;
@@ -278,15 +295,80 @@ export class GlobeEngine {
   }
 
   addSource(id: string, source: Source): void {
+    const shouldAutoAttachImagery = source instanceof RasterTileSource
+      && source.id === DEFAULT_AUTO_IMAGERY_SOURCE_ID
+      && source.id !== id;
+
+    if (shouldAutoAttachImagery) {
+      source.id = id;
+    }
+
     this.sourceManager.add(id, source);
+
+    if (shouldAutoAttachImagery) {
+      const autoLayerId = `__auto-imagery:${id}`;
+      this.autoImageryLayerIds.set(id, autoLayerId);
+      this.addLayer(new RasterLayer({ id: autoLayerId, source: id }));
+      return;
+    }
+
+    this.requestRender();
   }
 
   removeSource(id: string): void {
+    const autoLayerId = this.autoImageryLayerIds.get(id);
+
+    if (autoLayerId) {
+      this.removeLayer(autoLayerId);
+      this.autoImageryLayerIds.delete(id);
+    }
+
     this.sourceManager.remove(id);
   }
 
   getSource(id: string): Source | undefined {
     return this.sourceManager.get(id);
+  }
+
+  getDebugState(): DebugState {
+    return {
+      activeImageryTiles: this.surfaceSystem.getVisibleImageryTileCount(),
+      visibleTiles: this.surfaceSystem.getVisibleTileCount(),
+      imageryRequestCount: this.surfaceSystem.getImageryRequestCount()
+    };
+  }
+
+  async waitForSource(
+    id: string,
+    options: WaitForSourceOptions = {}
+  ): Promise<void> {
+    const source = this.getSource(id);
+
+    if (!(source instanceof RasterTileSource)) {
+      return;
+    }
+
+    const timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_FOR_SOURCE_TIMEOUT_MS;
+    const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_WAIT_FOR_SOURCE_POLL_INTERVAL_MS;
+    const startedAt = performance.now();
+
+    while (performance.now() - startedAt <= timeoutMs) {
+      this.render();
+
+      if (
+        this.surfaceSystem.getVisibleImageryTileCount(id) > 0
+        && this.surfaceSystem.getVisibleTileCount() > 0
+        && this.surfaceSystem.getImageryRequestCount(id) > 0
+      ) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, pollIntervalMs);
+      });
+    }
+
+    throw new Error(`Timed out waiting for source "${id}"`);
   }
 
   addMarker(marker: MarkerDefinition): void {

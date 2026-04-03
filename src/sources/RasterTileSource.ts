@@ -24,7 +24,7 @@ function tileKey(coordinate: TileCoordinate): string {
 }
 
 export class RasterTileSource implements Source {
-  readonly id: string;
+  id: string;
   readonly tileSize: number;
   readonly minZoom: number;
   readonly maxZoom: number;

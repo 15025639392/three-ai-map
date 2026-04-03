@@ -813,6 +813,29 @@ export class RasterLayer extends Layer {
     return false;
   }
 
+  getDebugStats(): {
+    sourceId: string;
+    activeTileCount: number;
+    requestCount: number;
+  } {
+    let activeTileCount = 0;
+
+    for (const entry of this.activeTiles.values()) {
+      if (entry.mesh) {
+        activeTileCount += 1;
+      }
+    }
+
+    const source = this.context?.getSource?.(this.sourceId);
+    const requestCount = source instanceof RasterTileSource ? source.getStats().requested : 0;
+
+    return {
+      sourceId: this.sourceId,
+      activeTileCount,
+      requestCount
+    };
+  }
+
   private syncTiles(context: LayerContext): void {
     const source = context.getSource?.(this.sourceId);
 

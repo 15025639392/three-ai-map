@@ -225,6 +225,50 @@ export class SurfaceSystem {
     return this.getVisibleTileKeys().length;
   }
 
+  getVisibleImageryTileCount(sourceId?: string): number {
+    let count = 0;
+
+    for (const layer of this.getOrderedImageryLayers()) {
+      if (!layer.visible) {
+        continue;
+      }
+
+      const stats = layer.getDebugStats();
+      if (sourceId && stats.sourceId !== sourceId) {
+        continue;
+      }
+
+      count += stats.activeTileCount;
+    }
+
+    return count;
+  }
+
+  getImageryRequestCount(sourceId?: string): number {
+    let count = 0;
+    const countedSourceIds = new Set<string>();
+
+    for (const layer of this.getOrderedImageryLayers()) {
+      if (!layer.visible) {
+        continue;
+      }
+
+      const stats = layer.getDebugStats();
+      if (sourceId && stats.sourceId !== sourceId) {
+        continue;
+      }
+
+      if (countedSourceIds.has(stats.sourceId)) {
+        continue;
+      }
+
+      countedSourceIds.add(stats.sourceId);
+      count += stats.requestCount;
+    }
+
+    return count;
+  }
+
   private getOrderedImageryLayers(): RasterLayer[] {
     return [...this.imageryLayers.values()].sort((left, right) => {
       const leftZ = left.zIndex ?? 0;
