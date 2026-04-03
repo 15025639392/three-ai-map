@@ -340,6 +340,8 @@ export class GlobeEngine {
       activeTerrainTiles: this.surfaceSystem.getActiveTerrainTileCount(),
       visibleTiles: this.surfaceSystem.getVisibleTileCount(),
       imageryRequestCount: this.surfaceSystem.getImageryRequestCount(),
+      imageryHostSwapCount: this.surfaceSystem.getImageryHostSwapCount(),
+      imageryAncestorFallbackCount: this.surfaceSystem.getImageryAncestorFallbackCount(),
       terrainRequestCount: this.surfaceSystem.getTerrainRequestCount(),
       terrainDecodeFallbackCount: this.surfaceSystem.getTerrainDecodeFallbackCount(),
       errorCount: this.errorCount,

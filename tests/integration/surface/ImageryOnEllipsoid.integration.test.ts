@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { GlobeEngine } from "../../../src/engine/GlobeEngine";
+import { RasterLayer } from "../../../src/layers/RasterLayer";
 import { RasterTileSource } from "../../../src/sources/RasterTileSource";
 
 describe("Imagery on Ellipsoid", () => {
@@ -20,6 +21,14 @@ describe("Imagery on Ellipsoid", () => {
     expect(engine.getDebugState().activeImageryTiles).toBeGreaterThan(0);
     expect(engine.getDebugState().visibleTiles).toBeGreaterThan(0);
     expect(engine.getDebugState().imageryRequestCount).toBeGreaterThan(0);
+    expect(engine.getDebugState().imageryHostSwapCount).toBeGreaterThanOrEqual(0);
+    expect(engine.getDebugState().imageryAncestorFallbackCount).toBeGreaterThanOrEqual(0);
+
+    const autoLayer = engine.getLayer("__auto-imagery:osm");
+    expect(autoLayer).toBeInstanceOf(RasterLayer);
+    const autoStats = (autoLayer as RasterLayer).getDebugStats();
+    expect(autoStats.hostSwapCount).toBeGreaterThanOrEqual(0);
+    expect(autoStats.ancestorFallbackCount).toBeGreaterThanOrEqual(0);
 
     engine.dispose();
   });

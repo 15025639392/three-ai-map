@@ -43,6 +43,7 @@ interface RasterTileEntry {
   composedTarget: WebGLRenderTarget | null;
   pendingDetailDraws: GpuTileDrawItem[];
   detailFlushScheduled: boolean;
+  renderableState: "ancestorFallback" | "targetReady";
 }
 
 interface SourceCropRegion {
@@ -759,6 +760,8 @@ export class RasterLayer extends Layer {
   private readonly imageryFallbackColor: string | null;
   private readonly group = new Group();
   private readonly activeTiles = new Map<string, RasterTileEntry>();
+  private hostSwapCount = 0;
+  private ancestorFallbackCount = 0;
   private gpuComposer: RasterGpuComposer | null = null;
   private context: LayerContext | null = null;
   private cachedRecoveryConfig:
@@ -817,6 +820,8 @@ export class RasterLayer extends Layer {
     sourceId: string;
     activeTileCount: number;
     requestCount: number;
+    hostSwapCount: number;
+    ancestorFallbackCount: number;
   } {
     let activeTileCount = 0;
 
@@ -832,7 +837,9 @@ export class RasterLayer extends Layer {
     return {
       sourceId: this.sourceId,
       activeTileCount,
-      requestCount
+      requestCount,
+      hostSwapCount: this.hostSwapCount,
+      ancestorFallbackCount: this.ancestorFallbackCount
     };
   }
 
@@ -1027,7 +1034,8 @@ export class RasterLayer extends Layer {
         version: 0,
         composedTarget: null,
         pendingDetailDraws: [],
-        detailFlushScheduled: false
+        detailFlushScheduled: false,
+        renderableState: "ancestorFallback"
       };
       this.activeTiles.set(plan.hostTileKey, entry);
     }
@@ -1128,6 +1136,7 @@ export class RasterLayer extends Layer {
     }
 
     if (plan.requiresCompositing) {
+      const renderableState = this.resolveRenderableState(plan, baseTiles);
       const surface = this.createCompositedMesh(
         context,
         hostGeometry,
@@ -1143,7 +1152,7 @@ export class RasterLayer extends Layer {
         throw new StaleRasterTileError();
       }
 
-      this.swapEntryMesh(entry, surface.mesh, surface.target);
+      this.swapEntryMesh(entry, surface.mesh, surface.target, renderableState);
       entry.hostGeometryVersion = hostGeometryVersion;
       this.context?.requestRender?.();
       this.startDetailRequests(entry, plan, source, recoveryConfig, isCurrent);
@@ -1163,7 +1172,8 @@ export class RasterLayer extends Layer {
       throw new StaleRasterTileError();
     }
 
-    this.swapEntryMesh(entry, mesh, null);
+    const renderableState = this.resolveRenderableState(plan, baseTiles);
+    this.swapEntryMesh(entry, mesh, null, renderableState);
     entry.hostGeometryVersion = hostGeometryVersion;
     this.context?.requestRender?.();
   }
@@ -1310,6 +1320,7 @@ export class RasterLayer extends Layer {
     const hostGeometryVersion = host?.getActiveTileGeometryVersion?.(plan.hostTileKey) ?? null;
 
     if (requiresCompositing) {
+      const renderableState = this.resolveRenderableState(plan, cachedTiles);
       const surface = this.createCompositedMesh(
         context,
         hostGeometry,
@@ -1318,7 +1329,7 @@ export class RasterLayer extends Layer {
         cachedTiles,
         context.radius
       );
-      this.swapEntryMesh(entry, surface.mesh, surface.target);
+      this.swapEntryMesh(entry, surface.mesh, surface.target, renderableState);
       entry.hostGeometryVersion = hostGeometryVersion;
       context.requestRender?.();
       return;
@@ -1331,7 +1342,8 @@ export class RasterLayer extends Layer {
       cachedTiles[0].source,
       context.radius
     );
-    this.swapEntryMesh(entry, mesh, null);
+    const renderableState = this.resolveRenderableState(plan, cachedTiles);
+    this.swapEntryMesh(entry, mesh, null, renderableState);
     entry.hostGeometryVersion = hostGeometryVersion;
     context.requestRender?.();
   }
@@ -1405,9 +1417,11 @@ export class RasterLayer extends Layer {
   private swapEntryMesh(
     entry: RasterTileEntry,
     mesh: Mesh<BufferGeometry, MeshStandardMaterial>,
-    target: WebGLRenderTarget | null
+    target: WebGLRenderTarget | null,
+    renderableState: "ancestorFallback" | "targetReady"
   ): void {
     if (entry.mesh) {
+      this.hostSwapCount += 1;
       this.group.remove(entry.mesh);
       this.disposeRasterMesh(entry.mesh, { disposeMap: entry.composedTarget === null });
     }
@@ -1421,7 +1435,26 @@ export class RasterLayer extends Layer {
     entry.detailFlushScheduled = false;
     entry.mesh = mesh;
     entry.composedTarget = target;
+    entry.renderableState = renderableState;
+
+    if (renderableState === "ancestorFallback") {
+      this.ancestorFallbackCount += 1;
+    }
+
     this.group.add(mesh);
+  }
+
+  private resolveRenderableState(
+    plan: RasterTilePlan,
+    tiles: readonly LoadedRasterTile[]
+  ): "ancestorFallback" | "targetReady" {
+    for (const tile of tiles) {
+      if (tile.request.coordinate.z < plan.imageryZoom) {
+        return "ancestorFallback";
+      }
+    }
+
+    return "targetReady";
   }
 
   private startDetailRequests(

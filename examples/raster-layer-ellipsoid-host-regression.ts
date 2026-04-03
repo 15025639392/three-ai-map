@@ -63,6 +63,8 @@ export function runRasterLayerEllipsoidHostRegression(
     container.dataset.requestedImageryMaxZoom = "";
     container.dataset.requestedImageryKeys = "";
     container.dataset.expectedImageryTargetZoom = "";
+    container.dataset.hostSwapCount = "";
+    container.dataset.imageryAncestorFallbackCount = "";
     output.textContent = error instanceof Error ? `错误:${error.message}` : "错误:未知";
   };
 
@@ -86,6 +88,7 @@ export function runRasterLayerEllipsoidHostRegression(
 
     const hasExpectedImageryZoom = Number.isFinite(maxRequestedZoom) && maxRequestedZoom >= expectedImageryTargetZoom;
     const hasVisibleMesh = rasterMeshCount > 0;
+    const rasterStats = rasterLayer.getDebugStats();
 
     container.dataset.phase = hasExpectedImageryZoom && hasVisibleMesh ? "after-ellipsoid-imagery" : "error";
     container.dataset.rasterMeshCount = `${rasterMeshCount}`;
@@ -95,6 +98,8 @@ export function runRasterLayerEllipsoidHostRegression(
       : "";
     container.dataset.requestedImageryKeys = requestedKeys.join(",");
     container.dataset.expectedImageryTargetZoom = `${expectedImageryTargetZoom}`;
+    container.dataset.hostSwapCount = `${rasterStats.hostSwapCount}`;
+    container.dataset.imageryAncestorFallbackCount = `${rasterStats.ancestorFallbackCount}`;
 
     if (!hasVisibleMesh) {
       output.textContent = "错误:无地形时 RasterLayer 未生成可见 mesh";
@@ -138,6 +143,8 @@ export function runRasterLayerEllipsoidHostRegression(
   container.dataset.requestedImageryMaxZoom = "";
   container.dataset.requestedImageryKeys = "";
   container.dataset.expectedImageryTargetZoom = "";
+  container.dataset.hostSwapCount = "";
+  container.dataset.imageryAncestorFallbackCount = "";
   output.textContent = "启动中:raster-layer-ellipsoid-host-regression";
 
   engine.addSource("raster", rasterSource);

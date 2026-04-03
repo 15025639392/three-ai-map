@@ -5,6 +5,8 @@ export interface DebugState {
   activeTerrainTiles: number;
   visibleTiles: number;
   imageryRequestCount: number;
+  imageryHostSwapCount: number;
+  imageryAncestorFallbackCount: number;
   terrainRequestCount: number;
   terrainDecodeFallbackCount: number;
   errorCount: number;

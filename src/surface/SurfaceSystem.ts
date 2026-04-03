@@ -281,6 +281,44 @@ export class SurfaceSystem {
     return count;
   }
 
+  getImageryHostSwapCount(sourceId?: string): number {
+    let count = 0;
+
+    for (const layer of this.getOrderedImageryLayers()) {
+      if (!layer.visible) {
+        continue;
+      }
+
+      const stats = layer.getDebugStats();
+      if (sourceId && stats.sourceId !== sourceId) {
+        continue;
+      }
+
+      count += stats.hostSwapCount;
+    }
+
+    return count;
+  }
+
+  getImageryAncestorFallbackCount(sourceId?: string): number {
+    let count = 0;
+
+    for (const layer of this.getOrderedImageryLayers()) {
+      if (!layer.visible) {
+        continue;
+      }
+
+      const stats = layer.getDebugStats();
+      if (sourceId && stats.sourceId !== sourceId) {
+        continue;
+      }
+
+      count += stats.ancestorFallbackCount;
+    }
+
+    return count;
+  }
+
   private getOrderedImageryLayers(): RasterLayer[] {
     return [...this.imageryLayers.values()].sort((left, right) => {
       const leftZ = left.zIndex ?? 0;
