@@ -87,8 +87,14 @@ export { GestureController } from "./core/GestureController";
 export { FrameLoop } from "./core/FrameLoop";
 export { ModuleRegistry } from "./core/ModuleRegistry";
 export { PerformanceMonitor } from "./core/PerformanceMonitor";
+export { RequestScheduler } from "./core/RequestScheduler";
+export type {
+  RequestSchedulerOptions,
+  ScheduledRequest
+} from "./core/RequestScheduler";
 export type { Metric, PerformanceReport } from "./core/PerformanceMonitor";
 export { PostProcessing } from "./core/PostProcessing";
+export { TileCache } from "./core/TileCache";
 export type { SurfaceHost, SurfacePlannerConfig } from "./surface/SurfaceHost";
 
 // Tile Infrastructure

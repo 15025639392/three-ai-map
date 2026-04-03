@@ -17,6 +17,8 @@ export interface RasterTileSourceOptions {
   loadTile?: (coordinate: TileCoordinate, signal?: AbortSignal) => Promise<TileSource>;
 }
 
+const DEFAULT_RASTER_SOURCE_ID = "raster";
+
 function tileKey(coordinate: TileCoordinate): string {
   return `${coordinate.z}/${coordinate.x}/${coordinate.y}`;
 }
@@ -32,7 +34,19 @@ export class RasterTileSource implements Source {
   private readonly scheduler: TileScheduler<TileSource, TileCoordinate>;
   private context: SourceContext | null = null;
 
-  constructor(id: string, options: RasterTileSourceOptions) {
+  constructor(options: RasterTileSourceOptions);
+  constructor(id: string, options: RasterTileSourceOptions);
+  constructor(
+    idOrOptions: string | RasterTileSourceOptions,
+    maybeOptions?: RasterTileSourceOptions
+  ) {
+    const id = typeof idOrOptions === "string" ? idOrOptions : DEFAULT_RASTER_SOURCE_ID;
+    const options = typeof idOrOptions === "string" ? maybeOptions : idOrOptions;
+
+    if (!options) {
+      throw new Error("RasterTileSource options are required");
+    }
+
     this.id = id;
     this.templates = options.tiles;
     this.tileSize = options.tileSize ?? 256;
